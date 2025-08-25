@@ -1,4 +1,3 @@
-
 import argparse, urllib.parse
 from . import diagnostics, report
 
@@ -8,9 +7,9 @@ def run_site(site):
     results["dns"] = diagnostics.resolve_dns(host)
     if results["dns"]["ok"]:
         ip = results["dns"]["ip"]
-        results["tcp80"] = diagnostics.tcp_connect(ip, 80)
-        results["tcp443"] = diagnostics.tcp_connect(ip, 443)
-        results["tls"] = diagnostics.tls_handshake(host)
+        results["tcp80"] = diagnostics.tcp_check(ip, 80)
+        results["tcp443"] = diagnostics.tcp_check(ip, 443)
+        results["tls"] = diagnostics.check_tls(host)
         results["http"] = diagnostics.http_get(host)
         results["ping"] = diagnostics.ping(host)
         results["traceroute"] = diagnostics.traceroute(host)
