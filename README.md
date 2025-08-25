@@ -4,7 +4,7 @@
 NetDoctor helps everyday users diagnose *why* a website feels slow or unreachable.  
 It combines **DNS, TCP, TLS, HTTP, ping, and traceroute** checks and produces a **human-readable report**.
 
-## 🚀 Features
+## Features
 - Detects **DNS failures**
 - Checks if **server is down**
 - Flags **website blocking (403/451, DNS tampering)**
@@ -12,17 +12,17 @@ It combines **DNS, TCP, TLS, HTTP, ping, and traceroute** checks and produces a 
 - Runs **traceroute** for path visibility
 - Provides **heuristic diagnosis** (e.g., congestion vs packet loss)
 
-## 🔧 Installation
+## Installation
 ```bash
-git clone https://github.com/your-username/netdoctor.git
+git clone https://github.com/Ajitesh1234/netdoctor.git
 cd netdoctor
 pip install -e .
 ```
 
-## ▶️ Usage
+## Usage
 Run diagnostics on a few sites:
 ```bash
-python -m netdoctor.main --sites https://example.com https://www.wikipedia.org
+python -m netdoctor.main --sites https://www.wikipedia.org
 ```
 
 Output:
@@ -34,7 +34,7 @@ Example:
 python -m netdoctor.main --json --out result.json
 ```
 
-## 📊 Example Report
+## Example Report
 ```
 # NetDoctor Report
 
