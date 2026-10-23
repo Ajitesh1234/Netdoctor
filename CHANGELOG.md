@@ -4,9 +4,13 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 and the project follows [Semantic Versioning](https://semver.org/). JSON output is versioned separately
 via `schema_version`.
 
-## [Unreleased]
+## [1.1.0] - 2026-10-23
 
 ### Added
+- **Watch mode** (`-w/--watch`, `--interval`, `--max-runs`, `--heartbeat`): re-runs diagnostics on an interval and
+  reports only state changes (`initial`, `change`, `recovered`, `heartbeat`, `error`) with how long each state lasted,
+  plus an availability summary on exit. `--json` emits JSON Lines events that include the full report.
+  Library API: `netdoctor.Watcher`, `WatchEvent`, `WatchSummary`.
 - `--ca-bundle PEM` / `Config.ca_bundle`: verify TLS against a custom CA bundle (corporate proxies, private CAs).
 
 ### Fixed

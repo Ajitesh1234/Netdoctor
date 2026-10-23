@@ -36,6 +36,7 @@ It is honest about uncertainty. Anything with an innocent explanation (CDN geo-D
 | **HTTP(S)** | Per-hop timing, manual redirect following, HTTPS→HTTP fallback detection | 403 / 429 / 451 / 5xx meaning, redirect loops, slow time-to-first-byte, HTTPS missing |
 | **ICMP** | System `ping`, parsed on Linux, macOS, BSD and Windows | Loss and RTT as a cross-check; "ping blocked but site fine" is correctly treated as harmless |
 | **Path** | Optional `traceroute` / `tracert` | Where along the route things stop |
+| **Over time** | `--watch`: change detection, recovery timing, availability summary | Intermittent problems a single run misses |
 
 **Engineering properties**
 
@@ -87,7 +88,7 @@ If no scheme is given, NetDoctor tries **HTTPS first** and reports whether it ha
 ### Example: your resolver is blocking a site
 
 ```text
-NetDoctor 1.0.0  -  2026-10-22T09:30:00Z
+NetDoctor 1.1.0  -  2026-10-22T09:30:00Z
 
 blocked-site.example  ✖ FAILING  (0.1s)
   Your system resolver says 'blocked-site.example' does not exist, but public resolvers (1.1.1.1, 8.8.8.8) return addresses for it.
@@ -129,6 +130,46 @@ https://shop.example  ⚠ DEGRADED  (7.4s)
 
 Both examples above are rendered by NetDoctor's own report engine from representative check data.
 
+## Watch mode: catch the problems that come and go
+
+A single run is a snapshot. Flaky Wi-Fi, an ISP that throttles in the evening, or a certificate about to expire only show up over time. `--watch` re-runs the full diagnosis on an interval and prints **only what changed**:
+
+```bash
+netdoctor https://shop.example --watch                       # every 30 s until Ctrl-C
+netdoctor example.com github.com -w --interval 10            # several targets
+netdoctor example.com -w --heartbeat 300                     # + a "still alive" line every 5 min
+netdoctor example.com -w --json | jq 'select(.event != "heartbeat")'   # JSON Lines
+netdoctor example.com -w --max-runs 20 --interval 5          # bounded run, useful in scripts
+netdoctor example.com -w -o netdoctor.log                    # append events to a file
+```
+
+```text
+2026-10-23 09:00:00Z  https://shop.example  ✔ HEALTHY   No problems detected.
+2026-10-23 09:01:00Z  https://shop.example  ⚠ DEGRADED  was HEALTHY for 1m 00s
+    + 40% of connection attempts to 104.18.32.47:443 failed (3/5 succeeded).
+        -> Intermittent loss causes retries and stalls. Check Wi-Fi/ISP quality.
+2026-10-23 09:01:30Z  https://shop.example  ✖ FAILING   was DEGRADED for 30s
+    + Cannot open a TCP connection to shop.example (port 443); the attempt timed out.
+        -> Packets are being dropped: the server is down, or a firewall/ISP is filtering.
+    - TCP_PACKET_LOSS cleared
+2026-10-23 09:06:00Z  https://shop.example  ✔ HEALTHY   recovered after 4m 30s as FAILING
+    - TCP_UNREACHABLE cleared
+
+Stopped after 15 run(s) over 6m 00s.
+  https://shop.example  HEALTHY for 0s  |  checks 5: healthy 3, degraded 1, failing 1  (60% healthy)
+```
+
+*(Illustrative session rendered by NetDoctor's own event renderer.)*
+
+- **Silence means nothing changed.** A target's state is its overall status plus the set of warning-or-worse finding *codes*. A latency reading wobbling from 48 ms to 51 ms is not an event; `HIGH_LATENCY` appearing is.
+- **Events:** `initial`, `change`, `recovered` (with how long the problem lasted), optional `heartbeat`, and `error`. A crashing cycle is reported as an `error` event and monitoring continues.
+- **On exit** you get a summary with checks and the share of healthy checks per target, so a long watch doubles as a quick availability report.
+- **JSON Lines** (`--json`): one compact object per line, each with `schema_version`, `event`, `status`, `added` / `removed` findings and the **full report** for that moment, so you can chart latency from the log. The final line has `"event": "summary"`.
+- Events go to **stdout** (or are *appended* to `-o FILE`); the start banner goes to stderr, so pipes stay clean.
+- Run it under `systemd`, `docker run -d` or `tmux`. For example: `docker run -d --restart unless-stopped netdoctor example.com --watch --interval 60 --json`.
+
+Watch mode supports `text` and `json` output (not `markdown`). Pick an interval comfortably above `--timeout` so a cycle on a dead host can finish before the next one starts.
+
 ## CLI reference
 
 ```text
@@ -147,6 +188,10 @@ netdoctor [TARGET ...] [options]
 | `--no-icmp` | off | Skip the ping check (e.g. in containers without `ping`). |
 | `--no-dns-compare` | off | Don't query public resolvers. Use on air-gapped or privacy-sensitive networks. |
 | `--resolver IP` | `1.1.1.1`, `8.8.8.8` | Public resolver for the DNS cross-check; repeatable. |
+| `-w, --watch` | off | Monitor continuously; print only state changes. See [Watch mode](#watch-mode-catch-the-problems-that-come-and-go). |
+| `--interval SECONDS` | `30` | Seconds between runs in watch mode (minimum 1). |
+| `--max-runs N` | forever | Stop watch mode after N runs. |
+| `--heartbeat SECONDS` | off | In watch mode, also emit a `heartbeat` event for unchanged targets every SECONDS. |
 | `--ca-bundle PEM` | system store | Trust the CAs in this PEM file *instead of* the system store. For corporate proxies / private CAs. |
 | `--traceroute` | off | Also run traceroute (can add 20–60 s). |
 | `--color {auto,always,never}` | `auto` | ANSI colour; honours `NO_COLOR`. |
@@ -164,7 +209,9 @@ Designed for scripts, cron and CI. With several targets, the **worst** status wi
 | `1` | **Degraded**: reachable but with at least one warning |
 | `2` | **Usage error**: bad target or option (no network traffic was sent) |
 | `3` | **Failing**: at least one critical problem |
-| `130` | Interrupted (Ctrl-C) |
+| `130` | Interrupted (Ctrl-C), including stopping watch mode |
+
+In watch mode, a run that ends by `--max-runs` exits with the code for the **last** run's status (a watch whose every cycle crashed exits `3`).
 
 ```bash
 netdoctor https://api.example.com --no-icmp -f json -o status.json || notify-oncall
@@ -215,7 +262,7 @@ Default thresholds (all in [`Config`](src/netdoctor/config.py)): latency > 250 m
 
 ```json
 {
-  "tool_version": "1.0.0",
+  "tool_version": "1.1.0",
   "generated_at": "2026-10-22T09:30:00Z",
   "reports": [
     {
@@ -283,6 +330,13 @@ for f in report.findings:
 # several targets, concurrently, input order preserved
 session = run(["example.com", "github.com"], Config(workers=8))
 print(session.worst_status)
+
+# continuous monitoring with your own handler (webhook, Slack, metrics, ...)
+from netdoctor import Watcher
+
+watcher = Watcher(["example.com"], Config(), interval=30)
+watcher.loop(lambda ev: print(ev.event, ev.target, ev.status.value, ev.summary), max_runs=10)
+print(watcher.summary())
 ```
 
 `diagnose` / `run` never raise on network failures; failures are data in the returned report. They raise `netdoctor.target.TargetError` only for invalid input, before any traffic is sent.
@@ -327,6 +381,7 @@ The test suite needs **no internet**. It spins up local HTTP, TLS (with a genera
 src/netdoctor/
 ├── cli.py            argument parsing, exit codes
 ├── runner.py         concurrency & fault isolation
+├── watch.py          continuous monitoring: change detection, events, summary
 ├── analysis.py       root-cause diagnosis (the "brain")
 ├── report.py         text / Markdown / JSON renderers (pure functions)
 ├── models.py         typed result dataclasses + JSON conversion
@@ -341,7 +396,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add a check or finding.
 ## Roadmap
 
 - AAAA comparison and DNS-over-HTTPS cross-check
-- Optional continuous mode (`--watch`) with change detection
+- Webhook / Slack notifications on change events
 - Prometheus / OpenMetrics exporter
 - Localised Windows `ping` parsing
 
