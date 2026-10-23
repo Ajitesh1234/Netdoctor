@@ -36,6 +36,8 @@ def fake_dns():
                 data, addr = sock.recvfrom(512)
             except (TimeoutError, socket.timeout):
                 continue
+            except ConnectionResetError:
+                continue  # Windows: stray ICMP port-unreachable surfaces on recv
             except OSError:
                 return
             if state["mode"] == "silent":

@@ -9,6 +9,8 @@ from netdoctor.models import Status
 from netdoctor.target import TargetError
 
 CFG = Config(timeout=2.0, samples=2, icmp=False, dns_compare=False)
+# Windows takes ~2s to report a refused connection; keep the timeout above that.
+CFG_CLOSED = Config(timeout=6.0, samples=1, icmp=False, dns_compare=False)
 
 
 def test_diagnose_healthy_local(http_server):
@@ -18,13 +20,13 @@ def test_diagnose_healthy_local(http_server):
 
 
 def test_diagnose_closed_port_is_failing(closed_port):
-    rep = diagnose(f"127.0.0.1:{closed_port}", CFG)
+    rep = diagnose(f"127.0.0.1:{closed_port}", CFG_CLOSED)
     assert rep.status is Status.FAILING and "refused" in rep.summary
 
 
 def test_run_preserves_order_and_validates_upfront(http_server, closed_port):
     targets = [f"127.0.0.1:{closed_port}", f"http://127.0.0.1:{http_server}"]
-    s = run(targets, CFG)
+    s = run(targets, CFG_CLOSED)
     assert [r.target for r in s.reports] == targets and s.worst_status is Status.FAILING
     with pytest.raises(TargetError):
         run(["ok.example", "-bad"], CFG)
@@ -77,7 +79,8 @@ def test_cli_rejects_bad_targets_without_traffic(arg, capsys):
 
 
 def test_cli_bad_option_values(capsys):
-    assert cli.main(["x.com", "--samples", "0"]) == 2
+    assert cli.main(["127.0.0.1:9", "--samples", "0"]) == 2
+    assert cli.main(["127.0.0.1:9", "--ca-bundle", "/definitely/not/here.pem"]) == 2
 
 
 def test_cli_exit_codes_and_json(http_server, closed_port, capsys):
@@ -101,7 +104,9 @@ def test_cli_out_file_is_utf8(http_server, tmp_path, capsys):
         [f"http://127.0.0.1:{http_server}/ok", "-f", "markdown", "-o", str(out), "--no-icmp", "--no-dns-compare"]
     )
     assert rc == 0 and "✔" in out.read_text(encoding="utf-8")
-    assert cli.main(["x.com", "-o", str(tmp_path / "no" / "dir" / "f")]) == 2
+    bad = tmp_path / "no" / "dir" / "f"
+    rc = cli.main([f"http://127.0.0.1:{http_server}/ok", "-o", str(bad), "--no-icmp", "--no-dns-compare"])
+    assert rc == 2
 
 
 def test_module_entrypoint():

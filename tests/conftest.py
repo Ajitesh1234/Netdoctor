@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import http.server
-import shutil
 import socket
 import ssl
-import subprocess
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -53,30 +51,63 @@ def closed_port() -> int:
 
 @pytest.fixture(scope="session")
 def tls_cert(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    if not shutil.which("openssl"):
-        pytest.skip("openssl not available")
+    """Self-signed CA-style cert for localhost / 127.0.0.1, valid for 5 days.
+
+    Generated in pure Python so tests behave identically on Linux, macOS and Windows.
+    Includes SKI/AKI + critical CA basic constraints so strict verification (default
+    since Python 3.13) accepts it as a trust anchor.
+    """
+    pytest.importorskip("cryptography")
+    import datetime
+    import ipaddress
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(hours=1))
+        .not_valid_after(now + datetime.timedelta(days=5))
+        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+        .add_extension(
+            x509.KeyUsage(
+                digital_signature=True,
+                key_cert_sign=True,
+                crl_sign=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
+            ),
+            critical=True,
+        )
+        .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost"), x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
     d = tmp_path_factory.mktemp("cert")
-    subprocess.run(
-        [
-            "openssl",
-            "req",
-            "-x509",
-            "-newkey",
-            "rsa:2048",
-            "-nodes",
-            "-keyout",
-            str(d / "k.pem"),
-            "-out",
-            str(d / "c.pem"),
-            "-days",
-            "5",
-            "-subj",
-            "/CN=localhost",
-            "-addext",
-            "subjectAltName=DNS:localhost,IP:127.0.0.1",
-        ],
-        check=True,
-        capture_output=True,
+    (d / "c.pem").write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    (d / "k.pem").write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        )
     )
     return d
 

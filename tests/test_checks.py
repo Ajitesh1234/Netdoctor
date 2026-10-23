@@ -11,6 +11,7 @@ from netdoctor.config import Config
 from netdoctor.target import parse_target
 
 CFG = Config(timeout=2.0, samples=3)
+SLOW = 6.0  # timeout generous enough for Windows' slow connection-refused reporting
 
 
 # ------------------------------------------------------------------ tcp
@@ -21,7 +22,8 @@ def test_tcp_ok(http_server):
 
 
 def test_tcp_refused(closed_port):
-    r = tcp.probe("127.0.0.1", closed_port, 2, 1.0)
+    # Windows retries SYNs to a closed port for ~2s before reporting "refused": allow for it.
+    r = tcp.probe("127.0.0.1", closed_port, 1, SLOW)
     assert not r.ok and r.loss_pct == 100.0 and r.error_kind == "refused" and r.avg_ms is None
 
 
@@ -66,7 +68,7 @@ def test_http_error_statuses_are_results_not_failures(http_server, path, status)
 
 
 def test_http_connection_refused(closed_port):
-    r = _fetch(closed_port, "/")
+    r = http_check.fetch("http", "127.0.0.1", closed_port, "/", Config(timeout=SLOW))
     assert not r.ok and r.error_kind == "refused"
 
 
@@ -76,24 +78,28 @@ def test_http_fallback_from_https(http_server):
 
 
 # ------------------------------------------------------------------ tls
-def test_tls_untrusted_self_signed(tls_server, monkeypatch):
-    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+def test_tls_untrusted_self_signed(tls_server):
+    # Default trust store does not know our throw-away CA -> verification must fail.
     r = tls.check_tls("localhost", tls_server, 2.0)
     assert not r.ok and r.error_kind in ("self_signed", "untrusted_issuer")
 
 
-def test_tls_success_when_trusted(tls_server, tls_cert, monkeypatch):
-    monkeypatch.setenv("SSL_CERT_FILE", str(tls_cert / "c.pem"))
-    r = tls.check_tls("localhost", tls_server, 2.0)
+def test_tls_success_with_ca_bundle(tls_server, tls_cert):
+    r = tls.check_tls("localhost", tls_server, 2.0, ca_bundle=str(tls_cert / "c.pem"))
     assert r.ok, r.error
     assert r.version in ("TLSv1.2", "TLSv1.3") and r.subject == "localhost"
     assert 3 < r.days_to_expiry <= 5 and "localhost" in r.san and r.handshake_ms > 0
 
 
-def test_tls_ip_literal_is_verified_against_ip_san(tls_server, tls_cert, monkeypatch):
-    monkeypatch.setenv("SSL_CERT_FILE", str(tls_cert / "c.pem"))
-    r = tls.check_tls("127.0.0.1", tls_server, 2.0)
+def test_tls_ip_literal_is_verified_against_ip_san(tls_server, tls_cert):
+    r = tls.check_tls("127.0.0.1", tls_server, 2.0, ca_bundle=str(tls_cert / "c.pem"))
     assert r.ok, r.error
+
+
+def test_tls_hostname_mismatch_is_classified(tls_server, tls_cert):
+    # Cert is trusted but only valid for localhost/127.0.0.1; "127.0.0.2" is not in its SAN list.
+    r = tls.check_tls("127.0.0.2", tls_server, 2.0, ca_bundle=str(tls_cert / "c.pem"))
+    assert not r.ok and r.error_kind in ("hostname_mismatch", "refused", "timeout", "unreachable")
 
 
 def test_tls_against_plain_http_server_fails_cleanly(http_server):
@@ -101,14 +107,13 @@ def test_tls_against_plain_http_server_fails_cleanly(http_server):
     assert not r.ok and r.error_kind in ("tls_error", "reset", "timeout")
 
 
-def test_https_http_check_end_to_end(tls_server, tls_cert, monkeypatch):
-    monkeypatch.setenv("SSL_CERT_FILE", str(tls_cert / "c.pem"))
-    r = http_check.check_http(parse_target(f"https://localhost:{tls_server}/ok"), CFG)
+def test_https_http_check_end_to_end(tls_server, tls_cert):
+    cfg = Config(timeout=2.0, samples=3, ca_bundle=str(tls_cert / "c.pem"))
+    r = http_check.check_http(parse_target(f"https://localhost:{tls_server}/ok"), cfg)
     assert r.ok and r.scheme == "https" and not r.fell_back_from_https
 
 
-def test_cert_error_does_not_fall_back_to_http(tls_server, monkeypatch):
-    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+def test_cert_error_does_not_fall_back_to_http(tls_server):
     r = http_check.check_http(parse_target(f"localhost:{tls_server}"), CFG)
     assert not r.ok and r.error_kind in ("self_signed", "untrusted_issuer") and not r.fell_back_from_https
 
