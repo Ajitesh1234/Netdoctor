@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import sys
@@ -13,8 +14,11 @@ from .config import Config
 from .models import Status
 from .runner import run
 from .target import TargetError, parse_target
+from .watch import Watcher, WatchEvent, render_event_json, render_event_text, render_summary_text
 
 EXIT_HEALTHY, EXIT_DEGRADED, EXIT_USAGE, EXIT_FAILING, EXIT_INTERRUPTED = 0, 1, 2, 3, 130
+_EXIT_FOR = {Status.HEALTHY: EXIT_HEALTHY, Status.DEGRADED: EXIT_DEGRADED, Status.FAILING: EXIT_FAILING}
+DEFAULT_INTERVAL = 30.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,6 +54,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="trust the CAs in this PEM file instead of the system store (e.g. a corporate proxy CA)",
     )
     p.add_argument("--traceroute", action="store_true", help="also run traceroute (slow)")
+    w = p.add_argument_group("watch mode", "continuous monitoring: report only what changes")
+    w.add_argument(
+        "-w", "--watch", action="store_true", help="re-run forever and print only state changes (Ctrl-C to stop)"
+    )
+    w.add_argument(
+        "--interval",
+        type=float,
+        metavar="SECONDS",
+        help=f"seconds between runs (default: {DEFAULT_INTERVAL:g}, minimum 1)",
+    )
+    w.add_argument("--max-runs", type=int, metavar="N", help="stop after N runs (default: run until interrupted)")
+    w.add_argument(
+        "--heartbeat",
+        type=float,
+        metavar="SECONDS",
+        help="also emit a 'still alive' event for unchanged targets every SECONDS",
+    )
     p.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     p.add_argument("--ascii", action="store_true", help="use ASCII symbols instead of Unicode")
     p.add_argument("-v", "--verbose", action="count", default=0, help="log debug information to stderr")
@@ -85,6 +106,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw_targets = [*args.targets, *args.sites]
     if not raw_targets:
         parser.error("at least one TARGET is required")
+    fmt = "json" if args.json else (args.format or "text")
+    if not args.watch:
+        used = [
+            name
+            for name, v in (
+                ("--interval", args.interval),
+                ("--max-runs", args.max_runs),
+                ("--heartbeat", args.heartbeat),
+            )
+            if v is not None
+        ]
+        if used:
+            parser.error(f"{', '.join(used)} require --watch")
+    elif fmt == "markdown":
+        parser.error("--watch supports --format text or json (json emits one event per line)")
     try:
         for t in raw_targets:
             parse_target(t)
@@ -100,11 +136,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             ca_bundle=args.ca_bundle,
             resolvers=tuple(args.resolver) if args.resolver else Config.resolvers,
         )
+        watcher = (
+            Watcher(
+                raw_targets,
+                cfg,
+                interval=DEFAULT_INTERVAL if args.interval is None else args.interval,
+                heartbeat=args.heartbeat or 0.0,
+            )
+            if args.watch
+            else None
+        )
+        if args.max_runs is not None and args.max_runs < 1:
+            raise ValueError("--max-runs must be >= 1")
     except (TargetError, ValueError) as exc:
         print(f"netdoctor: error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    fmt = "json" if args.json else (args.format or "text")
+    if watcher is not None:
+        return _watch(args, watcher, fmt)
+
     try:
         session = run(raw_targets, cfg)
     except KeyboardInterrupt:
@@ -134,6 +184,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         sys.stdout.write(text)
 
-    return {Status.HEALTHY: EXIT_HEALTHY, Status.DEGRADED: EXIT_DEGRADED, Status.FAILING: EXIT_FAILING}[
-        session.worst_status
-    ]
+    return _EXIT_FOR[session.worst_status]
+
+
+def _watch(args: argparse.Namespace, watcher: Watcher, fmt: str) -> int:
+    """Run watch mode. Events go to stdout (or are appended to ``--out``); chatter to stderr."""
+    out_fh = None
+    if args.out:
+        try:
+            out_fh = open(args.out, "a", encoding="utf-8", newline="\n")  # noqa: SIM115 - closed in finally
+        except OSError as exc:
+            print(f"netdoctor: error: cannot open {args.out}: {exc}", file=sys.stderr)
+            return EXIT_USAGE
+    ascii_only = args.ascii or (out_fh is None and not _can_encode(sys.stdout, "✔ℹ⚠✖"))
+    color = out_fh is None and _use_color(args.color)
+    stream = out_fh or sys.stdout
+
+    def write(line: str) -> None:
+        stream.write(line + "\n")
+        stream.flush()
+
+    def emit(event: WatchEvent) -> None:
+        write(
+            render_event_json(event) if fmt == "json" else render_event_text(event, ascii_only=ascii_only, color=color)
+        )
+
+    print(
+        f"netdoctor {__version__}: watching {len(watcher.targets)} target(s) every {watcher.interval:g}s"
+        + (f", appending to {args.out}" if args.out else "")
+        + " (Ctrl-C to stop)",
+        file=sys.stderr,
+    )
+    last = None
+    interrupted = False
+    try:
+        last = watcher.loop(emit, max_runs=args.max_runs, runner=run)
+    except KeyboardInterrupt:
+        interrupted = True
+    except BrokenPipeError:  # e.g. `netdoctor --watch ... | head`
+        with contextlib.suppress(Exception):
+            sys.stdout.close()
+        return EXIT_INTERRUPTED
+    try:
+        summary = watcher.summary()
+        write(render_event_json(summary) if fmt == "json" else render_summary_text(summary))
+    finally:
+        if out_fh:
+            out_fh.close()
+    if interrupted:
+        return EXIT_INTERRUPTED
+    return _EXIT_FOR[last.worst_status] if last else EXIT_FAILING
