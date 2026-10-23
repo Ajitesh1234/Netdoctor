@@ -23,8 +23,8 @@ def _iso(epoch: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
-def check_tls(host: str, port: int, timeout: float) -> TlsResult:
-    ctx = ssl.create_default_context()
+def check_tls(host: str, port: int, timeout: float, ca_bundle: str | None = None) -> TlsResult:
+    ctx = ssl.create_default_context(cafile=ca_bundle)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     start = time.perf_counter()
     try:

@@ -31,9 +31,11 @@ def _format_url(scheme: str, host: str, port: int, path: str) -> str:
     return f"{scheme}://{netloc}{path}"
 
 
-def _request(scheme: str, host: str, port: int, path: str, timeout: float) -> tuple[HttpHop, str | None]:
+def _request(
+    scheme: str, host: str, port: int, path: str, timeout: float, ca_bundle: str | None = None
+) -> tuple[HttpHop, str | None]:
     if scheme == "https":
-        ctx = ssl.create_default_context()
+        ctx = ssl.create_default_context(cafile=ca_bundle)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
         conn: http.client.HTTPConnection = http.client.HTTPSConnection(host, port, timeout=timeout, context=ctx)
     else:
@@ -74,7 +76,7 @@ def fetch(scheme: str, host: str, port: int, path: str, cfg: Config) -> HttpResu
             return _fail(hops, started, "redirect loop detected", "redirect_loop", cur[0])
         seen.add(url)
         try:
-            hop, location = _request(*cur, cfg.timeout)
+            hop, location = _request(*cur, cfg.timeout, cfg.ca_bundle)
         except Exception as exc:  # noqa: BLE001
             return _fail(hops, started, short_error(exc), classify_exception(exc), cur[0])
         hops.append(hop)

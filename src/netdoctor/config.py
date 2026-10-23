@@ -20,6 +20,8 @@ class Config:
     icmp: bool = True
     traceroute: bool = False
     dns_compare: bool = True
+    ca_bundle: str | None = None
+    """PEM file of trusted CAs used *instead of* the system store (e.g. a corporate CA)."""
     resolvers: tuple[str, ...] = ("1.1.1.1", "8.8.8.8")
     """Public resolvers used to cross-check the system resolver."""
 

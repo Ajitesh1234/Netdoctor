@@ -4,6 +4,18 @@ All notable changes are documented here. Format follows [Keep a Changelog](https
 and the project follows [Semantic Versioning](https://semver.org/). JSON output is versioned separately
 via `schema_version`.
 
+## [Unreleased]
+
+### Added
+- `--ca-bundle PEM` / `Config.ca_bundle`: verify TLS against a custom CA bundle (corporate proxies, private CAs).
+
+### Fixed
+- Test suite failed on Windows: TLS tests relied on `SSL_CERT_FILE` (ignored by CPython on Windows),
+  closed-port tests used timeouts shorter than Windows' ~2 s connection-refused delay, one test hit the
+  real internet, and TLS tests required an `openssl` binary. Tests now generate their certificate in
+  Python, pass the CA explicitly, and use portable timeouts.
+- Dependabot no longer raises minimum versions of Python dev tools (could break Python 3.9 support).
+
 ## [1.0.0] - 2026-10-22
 
 Complete rewrite. The 0.1.0 prototype could not be installed or run as documented

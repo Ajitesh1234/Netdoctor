@@ -68,7 +68,9 @@ def diagnose(target: Target | str, cfg: Config | None = None) -> TargetReport:
                 for addr in _representatives(addresses)
             ]
             tls_fut = (
-                pool.submit(tls_check.check_tls, target.host, target.tls_port, cfg.timeout) if target.tls_port else None
+                pool.submit(tls_check.check_tls, target.host, target.tls_port, cfg.timeout, cfg.ca_bundle)
+                if target.tls_port
+                else None
             )
             http_fut = pool.submit(http_check.check_http, target, cfg)
             icmp_fut = (

@@ -1,11 +1,14 @@
 version: 2
+# Python dev-tool ranges in pyproject.toml are deliberately lenient (they must keep working on
+# Python 3.9), and Dependabot's pip updater only raises the minimum bounds, so it is not enabled.
+# Actions and the Docker base image are grouped into a single monthly PR each.
 updates:
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
-  - package-ecosystem: pip
-    directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }
+    groups:
+      actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: /
-    schedule: { interval: weekly }
+    schedule: { interval: monthly }

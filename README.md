@@ -147,6 +147,7 @@ netdoctor [TARGET ...] [options]
 | `--no-icmp` | off | Skip the ping check (e.g. in containers without `ping`). |
 | `--no-dns-compare` | off | Don't query public resolvers. Use on air-gapped or privacy-sensitive networks. |
 | `--resolver IP` | `1.1.1.1`, `8.8.8.8` | Public resolver for the DNS cross-check; repeatable. |
+| `--ca-bundle PEM` | system store | Trust the CAs in this PEM file *instead of* the system store. For corporate proxies / private CAs. |
 | `--traceroute` | off | Also run traceroute (can add 20–60 s). |
 | `--color {auto,always,never}` | `auto` | ANSI colour; honours `NO_COLOR`. |
 | `--ascii` | auto | ASCII symbols instead of Unicode (auto-selected when the terminal can't encode Unicode). |

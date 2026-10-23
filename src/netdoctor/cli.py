@@ -44,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--resolver", action="append", metavar="IP", help="public resolver for the DNS cross-check (repeatable)"
     )
+    p.add_argument(
+        "--ca-bundle",
+        metavar="PEM",
+        help="trust the CAs in this PEM file instead of the system store (e.g. a corporate proxy CA)",
+    )
     p.add_argument("--traceroute", action="store_true", help="also run traceroute (slow)")
     p.add_argument("--color", choices=["auto", "always", "never"], default="auto")
     p.add_argument("--ascii", action="store_true", help="use ASCII symbols instead of Unicode")
@@ -83,6 +88,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         for t in raw_targets:
             parse_target(t)
+        if args.ca_bundle and not os.path.isfile(args.ca_bundle):
+            raise ValueError(f"--ca-bundle file not found: {args.ca_bundle}")
         cfg = Config(
             timeout=args.timeout,
             samples=args.samples,
@@ -90,6 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             icmp=not args.no_icmp,
             traceroute=args.traceroute,
             dns_compare=not args.no_dns_compare,
+            ca_bundle=args.ca_bundle,
             resolvers=tuple(args.resolver) if args.resolver else Config.resolvers,
         )
     except (TargetError, ValueError) as exc:
