@@ -32,6 +32,8 @@ class ResolverAnswer:
     latency_ms: float | None = None
     error: str | None = None
     error_kind: str | None = None
+    transport: str = "udp"
+    """``udp`` (plain DNS) or ``doh`` (DNS-over-HTTPS)."""
 
 
 @dataclass
@@ -164,6 +166,10 @@ class SessionReport:
     generated_at: str
     reports: list[TargetReport] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
+    run_id: str = ""
+    """Random identifier of this run, for correlating reports, logs and tickets."""
+    environment: dict[str, str] = field(default_factory=dict)
+    """Where the run happened (Python and OS versions); useful when comparing results across hosts."""
 
     @property
     def worst_status(self) -> Status:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from netdoctor.analysis import analyze
 from netdoctor.config import Config
 from netdoctor.models import (
@@ -227,3 +229,45 @@ def test_findings_sorted_worst_first_and_summary_is_worst():
     r = report(tcp=[tcp(443, loss=40)], http=good_http(503))
     assert r.findings[0].severity >= r.findings[-1].severity
     assert r.summary == r.findings[0].message and r.status is Status.FAILING
+
+
+# ------------------------------------------------------------------ encrypted-DNS cross-check
+def _dns(system, udp=(), doh=()):
+    public = [ResolverAnswer("1.1.1.1", True, list(udp))] if udp else []
+    public += [ResolverAnswer("doh:cloudflare-dns.com", True, list(doh), transport="doh")] if doh else []
+    return DnsResult(True, list(system), 20.0, public=public)
+
+
+def test_tampering_suspected_when_plain_dns_disagrees_with_doh():
+    r = report(dns=_dns(["198.51.100.66"], udp=["198.51.100.66"], doh=["104.18.32.47"]))
+    assert "DNS_TAMPERING_SUSPECTED" in codes(r) and "DNS_MISMATCH" not in codes(r)
+    assert r.status is Status.DEGRADED
+
+
+def test_only_local_resolver_differs_is_just_a_mismatch_hint():
+    r = report(dns=_dns(["198.51.100.66"], udp=["104.18.32.47"], doh=["104.18.32.47"]))
+    assert "DNS_MISMATCH" in codes(r) and "DNS_TAMPERING_SUSPECTED" not in codes(r)
+    assert r.status is Status.HEALTHY
+
+
+def test_agreement_across_all_channels_is_quiet():
+    r = report(dns=_dns(["104.18.32.47"], udp=["104.18.32.47"], doh=["104.18.32.47"]))
+    assert not {"DNS_MISMATCH", "DNS_TAMPERING_SUSPECTED"} & codes(r)
+
+
+def test_overlapping_answer_sets_are_not_a_mismatch():
+    r = report(dns=_dns(["104.18.32.47"], udp=["104.18.32.47", "104.18.33.47"], doh=["104.18.33.47"]))
+    assert not {"DNS_MISMATCH", "DNS_TAMPERING_SUSPECTED"} & codes(r)
+
+
+def test_ipv6_answers_are_compared_separately_from_ipv4():
+    ok = report(dns=_dns(["104.18.32.47", "2606:4700::1"], udp=["104.18.32.47"], doh=["104.18.32.47"]))
+    assert not {"DNS_MISMATCH", "DNS_TAMPERING_SUSPECTED"} & codes(ok)  # v6 present on one side only: no verdict
+    bad = report(dns=_dns(["2001:db8::bad"], udp=["2001:db8::bad"], doh=["2606:4700::1"]))
+    assert "DNS_TAMPERING_SUSPECTED" in codes(bad)
+
+
+def test_analysis_refuses_to_run_without_a_dns_result():
+    rep = TargetReport("x", "x.test")
+    with pytest.raises(RuntimeError, match="DNS result"):
+        analyze(rep, CFG)

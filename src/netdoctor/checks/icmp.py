@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - argv list, never a shell; the address is a validated IP literal
 import sys
 
 from ..models import IcmpResult
@@ -64,7 +64,7 @@ def check_icmp(ipv4_address: str, count: int, timeout: float) -> IcmpResult:
     cmd = _command(ipv4_address, count, timeout)
     cmd[0] = exe
     try:
-        proc = subprocess.run(
+        proc = subprocess.run(  # nosec B603 - argv list, never a shell; the address is a validated IP literal
             cmd,
             capture_output=True,
             text=True,

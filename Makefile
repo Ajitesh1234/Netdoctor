@@ -1,4 +1,4 @@
-.PHONY: install fmt lint typecheck test check build clean
+.PHONY: install fmt lint typecheck security test docs check build clean
 
 install:
 	pip install -e ".[dev]"
@@ -14,10 +14,17 @@ lint:
 typecheck:
 	mypy
 
+security:
+	bandit -r src
+	pip-audit --skip-editable
+
+docs:
+	python scripts/gen_docs.py
+
 test:
 	pytest --cov --cov-report=term-missing
 
-check: lint typecheck test
+check: lint typecheck security test
 
 build:
 	python -m build

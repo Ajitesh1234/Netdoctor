@@ -1,0 +1,43 @@
+# /etc/systemd/system/netdoctor.service: continuous monitoring with a sandboxed, unprivileged unit.
+[Unit]
+Description=NetDoctor connectivity monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=netdoctor
+Group=netdoctor
+# Secrets live in a root-owned 0600 file, never on the command line (visible in `ps`):
+#   NETDOCTOR_WEBHOOK_URL=https://hooks.example.com/...
+#   NETDOCTOR_WEBHOOK_SECRET=<32+ random bytes>
+EnvironmentFile=/etc/netdoctor/secrets.env
+ExecStart=/usr/local/bin/netdoctor --config /etc/netdoctor/netdoctor.toml --watch
+Restart=on-failure
+RestartSec=10
+# SIGTERM triggers a graceful shutdown (notifications flushed). 143 is the expected exit code.
+SuccessExitStatus=0 1 3 130 143
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+# ICMP via the system `ping` needs file capabilities on the binary; if you drop all capabilities, set
+# `icmp = false` in the config (TCP-based latency, jitter and loss are measured regardless).
+ReadWritePaths=/var/log/netdoctor
+LogsDirectory=netdoctor
+
+[Install]
+WantedBy=multi-user.target

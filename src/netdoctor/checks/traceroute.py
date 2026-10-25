@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 - argv list, never a shell; the address is a validated IP literal
 import sys
 
 from ..models import TracerouteResult
@@ -29,7 +29,9 @@ def check_traceroute(address: str, max_hops: int = 20, timeout: float = 2.0) -> 
     budget = max_hops * (timeout + 0.5) + 5
     truncated = False
     try:
-        proc = subprocess.run([exe, *args], capture_output=True, timeout=budget, check=False)
+        proc = subprocess.run(  # nosec B603 - argv list, never a shell; the address is a validated IP literal
+            [exe, *args], capture_output=True, timeout=budget, check=False
+        )
         out, err, rc = _decode(proc.stdout), _decode(proc.stderr), proc.returncode
     except subprocess.TimeoutExpired as exc:
         out, err, rc, truncated = _decode(exc.stdout), "", 0, True

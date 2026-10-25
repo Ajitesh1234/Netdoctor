@@ -1,0 +1,49 @@
+# NetDoctor configuration. Precedence: built-in defaults < this file < command-line flags.
+# Unknown sections or keys are an error (typos must not silently disable a setting).
+# Run `netdoctor --config netdoctor.toml --print-config` to see the effective settings.
+
+targets = ["https://www.example.com", "api.example.com:443"]
+
+[checks]
+timeout = 5.0                 # seconds per network operation
+samples = 5                   # TCP/ICMP samples per endpoint
+workers = 4                   # targets diagnosed in parallel
+icmp = true
+traceroute = false
+dns_compare = true            # false = never contact third-party resolvers (air-gapped / privacy)
+resolvers = ["1.1.1.1", "8.8.8.8"]
+doh_servers = ["https://cloudflare-dns.com/dns-query"]   # encrypted DNS cross-check (needs dns_compare)
+# ca_bundle = "/etc/ssl/corp-ca.pem"                     # trust a corporate/private CA instead of the system store
+
+[thresholds]
+latency_warn_ms = 250
+jitter_warn_ms = 30
+ttfb_warn_ms = 1500
+dns_warn_ms = 500
+cert_expiry_warn_days = 14
+
+[output]
+format = "text"               # text | markdown | json | html | prometheus (watch mode: text | json)
+
+[logging]
+format = "json"               # text | json (one object per line, for SIEM ingestion)
+# file = "/var/log/netdoctor/netdoctor.log"
+
+[watch]
+enabled = false               # true = behave as `--watch`
+interval = 60
+confirm = 2                   # report a change only after 2 consecutive sightings (flap damping)
+heartbeat = 3600              # emit a "still alive" event hourly for unchanged targets
+
+[webhook]
+url = "env:NETDOCTOR_WEBHOOK_URL"        # prefer env: references; the URL itself is a secret
+kind = "slack"                           # generic | slack
+events = ["change", "recovered", "error"]
+secret_env = "NETDOCTOR_WEBHOOK_SECRET"  # HMAC-SHA256 signing key (generic webhooks)
+allow_private = false                    # true disables SSRF protection: only for trusted internal receivers
+allow_http = false
+
+[metrics]
+port = 9877                              # serve /metrics (Prometheus) in watch mode
+bind = "127.0.0.1"
+token_env = "NETDOCTOR_METRICS_TOKEN"    # optional bearer token
