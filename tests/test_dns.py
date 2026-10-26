@@ -7,7 +7,7 @@ import threading
 
 import pytest
 
-from conftest import QuietHTTPServer
+from conftest import QuietHTTPServer, server_tls_context
 from netdoctor.checks import dns
 from netdoctor.config import Config
 from netdoctor.target import parse_target
@@ -186,7 +186,6 @@ def test_query_resolver_rejects_non_ip_server():
 @pytest.fixture()
 def doh_server(tls_cert):
     import http.server
-    import ssl
 
     state = {"mode": "ok", "ips": ("198.51.100.20",), "ips6": ("2001:db8::20",), "rcode": 0}
 
@@ -216,8 +215,7 @@ def doh_server(tls_cert):
             self.end_headers()
             self.wfile.write(payload)
 
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(tls_cert / "c.pem", tls_cert / "k.pem")
+    ctx = server_tls_context(tls_cert)
     srv = QuietHTTPServer(("127.0.0.1", 0), Handler)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()

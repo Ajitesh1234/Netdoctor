@@ -10,6 +10,14 @@ from pathlib import Path
 import pytest
 
 
+def server_tls_context(cert_dir):
+    """TLS server context for local test servers (TLS 1.2+, never the legacy protocol versions)."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert_dir / "c.pem", cert_dir / "k.pem")
+    return ctx
+
+
 class QuietHTTPServer(http.server.ThreadingHTTPServer):
     """Test server that does not print a traceback banner when a client disconnects abruptly."""
 
@@ -123,8 +131,7 @@ def tls_cert(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture()
 def tls_server(tls_cert: Path) -> Iterator[int]:
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(tls_cert / "c.pem", tls_cert / "k.pem")
+    ctx = server_tls_context(tls_cert)
     srv = QuietHTTPServer(("127.0.0.1", 0), _Handler)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()

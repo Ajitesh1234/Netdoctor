@@ -73,7 +73,7 @@ class _Registry:
 
 def _add_target(reg: _Registry, rep: TargetReport) -> None:
     t = rep.target
-    for st in Status:
+    for st in (Status.HEALTHY, Status.DEGRADED, Status.FAILING):
         reg.add(
             "netdoctor_target_status",
             "gauge",

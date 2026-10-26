@@ -32,6 +32,10 @@ Hardening and integration release: security review artefacts, alerting, metrics,
 - CLI options default to "unset" so a config file can supply them; flags always win. A watch-only flag without `--watch` is a usage error.
 
 ### Fixed
+- Atomic report writes no longer change the process-wide umask (not thread-safe) or call `chmod`: the temporary file is
+  created with `O_CREAT | O_EXCL` so the kernel applies the umask atomically.
+- A file descriptor was leaked when stdout was closed early (`| head`); the `--watch` output file is now closed on every path.
+- A queue-overflow race in the webhook notifier no longer swallows the condition silently (logged at debug level).
 - The metrics server could share its port with another process on Windows (`SO_REUSEADDR`); it no longer does.
 - Console output no longer crashes on legacy code pages (non-encodable symbols degrade).
 

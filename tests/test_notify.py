@@ -5,12 +5,11 @@ from __future__ import annotations
 import http.server
 import json
 import socket
-import ssl
 import threading
 
 import pytest
 
-from conftest import QuietHTTPServer
+from conftest import QuietHTTPServer, server_tls_context
 from netdoctor import notify
 from netdoctor.models import Finding, Severity, Status
 from netdoctor.notify import Attempt, NotifyError, WebhookConfig, WebhookNotifier
@@ -204,8 +203,7 @@ def tls_hook(tls_cert):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(tls_cert / "c.pem", tls_cert / "k.pem")
+    ctx = server_tls_context(tls_cert)
     srv = QuietHTTPServer(("127.0.0.1", 0), Handler)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -242,8 +240,10 @@ def test_success_signing_and_headers():
         return Attempt(200)
 
     n = make(send, clock=lambda: 1_700_000_000, cfg={"secret": "s3cr3t"})
-    assert n.submit(change_event())
-    assert n.close() and n.sent == 1 and n.failed == 0
+    queued = n.submit(change_event())
+    assert queued
+    drained = n.close()
+    assert drained and n.sent == 1 and n.failed == 0
     body, headers = got[0]
     assert headers["X-NetDoctor-Timestamp"] == "1700000000" and headers["X-NetDoctor-Event"] == "change"
     assert headers["X-NetDoctor-Signature"] == notify.sign("s3cr3t", "1700000000", body)
@@ -272,14 +272,16 @@ def test_retries_with_exponential_backoff_then_succeeds():
     slept: list[float] = []
     n = make(lambda c, b, h: next(results), sleep=slept.append)
     n.submit(change_event())
-    assert n.close() and n.sent == 1 and slept == [1.0, 2.0]
+    drained = n.close()
+    assert drained and n.sent == 1 and slept == [1.0, 2.0]
 
 
 def test_gives_up_after_configured_retries():
     calls = []
     n = make(lambda c, b, h: (calls.append(1), Attempt(503))[1], cfg={"retries": 3})
     n.submit(change_event())
-    assert n.close() and len(calls) == 3 and n.failed == 1 and n.sent == 0
+    drained = n.close()
+    assert drained and len(calls) == 3 and n.failed == 1 and n.sent == 0
 
 
 def test_permanent_errors_are_not_retried():
@@ -302,14 +304,18 @@ def test_retry_after_overrides_backoff():
 def test_only_configured_event_kinds_are_sent():
     got = []
     n = make(lambda c, b, h: (got.append(h["X-NetDoctor-Event"]), Attempt(200))[1])
-    assert not n.submit(change_event(event="initial")) and not n.submit(change_event(event="heartbeat"))
-    assert n.submit(change_event(event="recovered")) and n.submit(
-        change_event(event="error", target=None, status=None, error="x")
-    )
+    initial_queued = n.submit(change_event(event="initial"))
+    heartbeat_queued = n.submit(change_event(event="heartbeat"))
+    assert not initial_queued and not heartbeat_queued
+    recovered_queued = n.submit(change_event(event="recovered"))
+    error_queued = n.submit(change_event(event="error", target=None, status=None, error="x"))
+    assert recovered_queued and error_queued
     n.close()
     assert got == ["recovered", "error"]
     n2 = make(lambda c, b, h: Attempt(200), cfg={"events": frozenset({"initial"})})
-    assert n2.submit(change_event(event="initial")) and not n2.submit(change_event())
+    initial_ok = n2.submit(change_event(event="initial"))
+    change_ok = n2.submit(change_event())
+    assert initial_ok and not change_ok
     n2.close()
 
 
@@ -330,7 +336,8 @@ def test_queue_overflow_drops_oldest_and_keeps_newest():
         n.submit(change_event(target=name))
     assert n.dropped == 2  # t2 and t3 were displaced
     release.set()
-    assert n.close() and delivered == ["t1", "t4", "t5"] and n.sent == 3
+    drained = n.close()
+    assert drained and delivered == ["t1", "t4", "t5"] and n.sent == 3
 
 
 def test_worker_survives_a_crashing_transport():
@@ -345,20 +352,24 @@ def test_worker_survives_a_crashing_transport():
     n = make(send)
     n.submit(change_event())
     n.submit(change_event())
-    assert n.close() and n.failed == 1 and n.sent == 1
+    drained = n.close()
+    assert drained and n.failed == 1 and n.sent == 1
 
 
 def test_submit_after_close_is_refused_and_never_raises():
     n = make(lambda c, b, h: Attempt(200))
-    assert n.close()
-    assert n.submit(change_event()) is False
+    drained = n.close()
+    assert drained
+    queued = n.submit(change_event())
+    assert queued is False
 
 
 def test_end_to_end_through_a_real_socket(hook_server):
     state, port = hook_server
     n = WebhookNotifier(cfg(port, secret="k"))
     n.submit(change_event())
-    assert n.close() and n.sent == 1
+    drained = n.close()
+    assert drained and n.sent == 1
     _path, headers, body = state["requests"][0]
     assert headers["X-NetDoctor-Signature"] == notify.sign("k", headers["X-NetDoctor-Timestamp"], body)
 
@@ -403,7 +414,8 @@ def test_worker_ignores_foreign_queue_items_and_keeps_delivering():
     n = make(lambda c, b, h: (delivered.append(1), Attempt(200))[1])
     n._q.put("not an event")  # defensive path: must be skipped, not crash the worker
     n.submit(change_event())
-    assert n.close() and delivered == [1] and n.sent == 1
+    drained = n.close()
+    assert drained and delivered == [1] and n.sent == 1
 
 
 def test_delivery_falls_back_to_the_next_validated_address(hook_server, monkeypatch):

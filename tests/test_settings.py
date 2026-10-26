@@ -245,7 +245,7 @@ def test_redacted_never_shows_inline_webhook_urls():
 @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
 def test_warns_when_an_inline_webhook_url_sits_in_a_world_readable_file(tmp_path, caplog):
     path = write(tmp_path, '[webhook]\nurl = "https://hooks.example.com/secret"\n')
-    os.chmod(path, 0o644)
+    os.chmod(path, 0o640)
     caplog.set_level(logging.WARNING)
     s = Settings()
     data, base = settings.load_file(path)
@@ -257,7 +257,7 @@ def test_warns_when_an_inline_webhook_url_sits_in_a_world_readable_file(tmp_path
     assert caplog.text == ""
     # an env: reference is not a secret: no warning even for a readable file
     path2 = write(tmp_path, '[webhook]\nurl = "env:HOOK"\n', "b.toml")
-    os.chmod(path2, 0o644)
+    os.chmod(path2, 0o640)
     settings.apply_file(Settings(), settings.load_file(path2)[0], base, path=path2)
     assert caplog.text == ""
 

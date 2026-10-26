@@ -319,7 +319,9 @@ class WebhookNotifier:
                 self._q.get_nowait()
                 self._q.put_nowait(event)
             except (queue.Empty, queue.Full):
-                pass
+                # The worker drained (or another producer refilled) the queue between our checks. Eviction is
+                # best-effort and submit() must never raise; the event is simply dropped and counted below.
+                log.debug("webhook queue changed during overflow handling")
             with self._lock:
                 self.dropped += 1
             log.warning("webhook queue full; dropped the oldest notification")

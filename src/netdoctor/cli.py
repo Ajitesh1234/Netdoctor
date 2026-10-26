@@ -9,6 +9,7 @@ import os
 import signal
 import sys
 from collections.abc import Callable, Sequence
+from typing import TextIO
 
 from . import __version__, report
 from .fsutil import atomic_write_text
@@ -159,7 +160,11 @@ def _use_color(mode: str) -> bool:
 def _silence_stdout() -> None:
     """Point stdout at /dev/null so the interpreter's exit-time flush cannot raise again."""
     with contextlib.suppress(Exception):
-        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        try:
+            os.dup2(devnull, sys.stdout.fileno())
+        finally:
+            os.close(devnull)
 
 
 def _write_stdout(text: str) -> None:
@@ -307,7 +312,7 @@ def _watch(s: Settings) -> int:
     cfg = s.to_config()
     notifier: WebhookNotifier | None = None
     metrics: MetricsServer | None = None
-    out_fh = None
+    out_fh: TextIO | None = None
     try:
         watcher = Watcher(s.targets, cfg, interval=s.interval, heartbeat=s.heartbeat, confirm=s.confirm)
         notifier = _build_notifier(s)
@@ -345,6 +350,20 @@ def _watch(s: Settings) -> int:
         print(f"netdoctor: error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
+    try:
+        return _watch_loop(s, watcher, notifier, metrics, out_fh)
+    finally:
+        if out_fh is not None:  # closed on every path, including an unexpected exception
+            out_fh.close()
+
+
+def _watch_loop(
+    s: Settings,
+    watcher: Watcher,
+    notifier: WebhookNotifier | None,
+    metrics: MetricsServer | None,
+    out_fh: TextIO | None,
+) -> int:
     ascii_only = s.ascii or (out_fh is None and not _can_encode(sys.stdout, _SYMBOLS))
     color = out_fh is None and _use_color(s.color)
     stream = out_fh or sys.stdout
@@ -398,14 +417,9 @@ def _watch(s: Settings) -> int:
                 )
         if metrics is not None:
             metrics.stop()
-    try:
+    with contextlib.suppress(BrokenPipeError, ValueError, OSError):  # stdout/out file may already be closed
         summary = watcher.summary()
         write(render_event_json(summary) if s.format == "json" else render_summary_text(summary))
-    except (BrokenPipeError, ValueError, OSError):  # pragma: no cover - closed stdout
-        pass
-    finally:
-        if out_fh:
-            out_fh.close()
     if interrupted:
         return EXIT_TERMINATED if terminated else EXIT_INTERRUPTED
     return _EXIT_FOR[last.worst_status] if last else EXIT_FAILING

@@ -62,18 +62,21 @@ def test_every_test_referenced_by_the_threat_model_exists():
 
 
 # ------------------------------------------------------------------ the documented webhook verifier
-def _verifier():
+def _verifier(tmp_path):
     block = re.search(
         r"<!-- verifier:start -->\s*```python\n(.*?)```\s*<!-- verifier:end -->", read("docs/DEPLOYMENT.md"), re.S
     )
     assert block, "verifier snippet missing from DEPLOYMENT.md"
-    namespace: dict = {}
-    exec(compile(block.group(1), "DEPLOYMENT.md", "exec"), namespace)
-    return namespace["verify"]
+    module_file = tmp_path / "documented_verifier.py"
+    module_file.write_text(block.group(1), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("documented_verifier", module_file)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.verify
 
 
-def test_the_documented_webhook_verifier_accepts_real_signatures_and_rejects_forgeries():
-    verify = _verifier()
+def test_the_documented_webhook_verifier_accepts_real_signatures_and_rejects_forgeries(tmp_path):
+    verify = _verifier(tmp_path)
     body, ts = b'{"event":"change"}', str(int(time.time()))
     good = {"X-NetDoctor-Timestamp": ts, "X-NetDoctor-Signature": notify.sign("s3cret", ts, body)}
     assert verify("s3cret", good, body) is True
