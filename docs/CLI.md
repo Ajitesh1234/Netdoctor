@@ -22,6 +22,7 @@ Any option below can also be set in a [config file](CONFIGURATION.md); flags win
 | `-f`, `--format` | `text` \| `markdown` \| `json` \| `html` \| `prometheus` | output format (default: text) |
 | `--json` |  | shortcut for --format json |
 | `-o`, `--out` | `FILE` | write the report to FILE (atomically, UTF-8) instead of stdout |
+| `--out-mode` | `MODE` | permissions for new report files as octal, e.g. 640 (default: 600 = owner only) |
 | `--timeout` | `SECONDS` | per-operation timeout (default: 5) |
 | `--samples` | `N` | TCP/ICMP samples per endpoint (default: 5) |
 | `--workers` | `N` | targets checked in parallel (default: 4) |

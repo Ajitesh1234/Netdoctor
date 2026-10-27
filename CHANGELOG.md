@@ -19,13 +19,16 @@ Hardening and integration release: security review artefacts, alerting, metrics,
 - **Config file** (`--config`, TOML) with strict validation, `env:` secret references and `--print-config`.
 - **Flap damping** (`--confirm N`) for watch mode; JSON logs (`--log-format json`, `--log-file`); `run_id` and `environment` in reports.
 - **Graceful shutdown**: SIGTERM (exit 143) flushes pending notifications and prints the summary, like Ctrl-C (exit 130).
-- Atomic report-file writes; target-count cap (500); contextual I/O error messages.
+- `--out-mode` / `[output] mode` for report-file permissions. Atomic report-file writes; target-count cap (500); contextual I/O error messages.
 - `docs/` (threat model, deployment guide, generated CLI/configuration/metrics references, kept in sync by tests) and `examples/`
   (annotated config, hardened systemd unit, Kubernetes manifest, Prometheus alerts).
 - Supply chain: SHA-pinned GitHub Actions, `bandit` + `pip-audit` + CodeQL in CI, release workflow with Sigstore build-provenance
   attestation, SHA-256 sums and opt-in PyPI trusted publishing; hardened Dockerfile.
 
 ### Changed
+- **Report files are now created owner-only (`0600`) by default** (least privilege: reports list internal hostnames and
+  findings). Use the new `--out-mode` / `[output] mode` (e.g. `644` for the Prometheus textfile collector) to share them
+  deliberately; world-writable modes are refused. This also applies to the `--watch -o` log file.
 - The PyPI distribution is named **`netdoctor-cli`** (the name `netdoctor` is taken by an unrelated project). The command and the
   import package remain `netdoctor`.
 - Shipped code no longer uses `assert` (it is stripped under `python -O`); every `bandit` suppression is justified inline.
@@ -33,7 +36,7 @@ Hardening and integration release: security review artefacts, alerting, metrics,
 
 ### Fixed
 - Atomic report writes no longer change the process-wide umask (not thread-safe) or call `chmod`: the temporary file is
-  created with `O_CREAT | O_EXCL` so the kernel applies the umask atomically.
+  created with `O_CREAT | O_EXCL` and an explicit mode, which the kernel applies atomically.
 - A file descriptor was leaked when stdout was closed early (`| head`); the `--watch` output file is now closed on every path.
 - A queue-overflow race in the webhook notifier no longer swallows the condition silently (logged at debug level).
 - The metrics server could share its port with another process on Windows (`SO_REUSEADDR`); it no longer does.

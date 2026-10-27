@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -289,14 +290,97 @@ def test_atomic_write_to_missing_directory_raises(tmp_path):
         fsutil.atomic_write_text(str(tmp_path / "no" / "dir" / "f"), "x")
 
 
-@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
-def test_atomic_write_respects_umask_so_collectors_can_read(tmp_path):
-    old = os.umask(0o022)
+@contextlib.contextmanager
+def umask(value: int):
+    old = os.umask(value)
     try:
-        fsutil.atomic_write_text(str(tmp_path / "m.prom"), "x")
+        yield
     finally:
         os.umask(old)
-    assert (tmp_path / "m.prom").stat().st_mode & 0o777 == 0o644
+
+
+def perms(path) -> int:
+    return Path(path).stat().st_mode & 0o777
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_atomic_write_default_is_owner_only(tmp_path):
+    """Reports list internal hostnames and findings: least privilege unless the operator opts in."""
+    with umask(0o000):  # even a wide-open umask must not widen the default
+        fsutil.atomic_write_text(str(tmp_path / "r.txt"), "x")
+    assert perms(tmp_path / "r.txt") == 0o600
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_atomic_write_explicit_mode_and_umask_interplay(tmp_path):
+    with umask(0o022):
+        fsutil.atomic_write_text(str(tmp_path / "shared.prom"), "x", mode=0o644)
+    assert perms(tmp_path / "shared.prom") == 0o644  # opt-in for a collector running as another user
+    with umask(0o077):  # the umask still applies on top: it can only narrow, never widen
+        fsutil.atomic_write_text(str(tmp_path / "narrowed.prom"), "x", mode=0o644)
+    assert perms(tmp_path / "narrowed.prom") == 0o600
+
+
+@pytest.mark.parametrize("value", ["600", "640", "644", "0644", "400", " 640 "])
+def test_valid_modes(value):
+    assert settings.parse_mode(value) == int(value.strip(), 8)
+
+
+@pytest.mark.parametrize("value", ["6", "6400", "abc", "", "1777", "89", "-600", "6 00"])
+def test_malformed_modes_are_rejected(value):
+    with pytest.raises(SettingsError, match="3 octal digits"):
+        settings.parse_mode(value)
+
+
+@pytest.mark.parametrize("value", ["666", "602", "662", "777", "0666"])
+def test_world_writable_modes_are_refused(value):
+    with pytest.raises(SettingsError, match="world-writable"):
+        settings.parse_mode(value)
+
+
+def test_config_file_mode_must_be_a_quoted_string(tmp_path):
+    assert load(tmp_path, '[output]\nmode = "640"\n').out_mode == "640"
+    with pytest.raises(SettingsError, match="quoted octal string"):
+        load(tmp_path, "[output]\nmode = 640\n")
+    with pytest.raises(SettingsError, match="quoted octal string"):
+        load(tmp_path, "[output]\nmode = 0o640\n")  # TOML reads this as the integer 416
+
+
+@pytest.mark.parametrize("flag", ["666", "99", "abc"])
+def test_cli_rejects_unsafe_or_malformed_out_mode_before_any_traffic(flag, capsys):
+    assert cli.main(["a.test", "-o", "report.txt", "--out-mode", flag]) == 2
+    assert "mode" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_cli_report_files_are_private_by_default_and_shareable_on_request(http_server, tmp_path):
+    base = [f"http://127.0.0.1:{http_server}/ok", "--no-icmp", "--no-dns-compare", "--samples", "1", "-f", "prometheus"]
+    with umask(0o022):
+        assert cli.main([*base, "-o", str(tmp_path / "private.prom")]) == 0
+        assert cli.main([*base, "-o", str(tmp_path / "shared.prom"), "--out-mode", "644"]) == 0
+    assert perms(tmp_path / "private.prom") == 0o600 and perms(tmp_path / "shared.prom") == 0o644
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+def test_watch_output_file_is_private_by_default(http_server, tmp_path):
+    out = tmp_path / "watch.log"
+    argv = [
+        f"http://127.0.0.1:{http_server}/ok",
+        "--watch",
+        "--max-runs",
+        "1",
+        "--interval",
+        "1",
+        "--no-icmp",
+        "--no-dns-compare",
+        "--samples",
+        "1",
+        "-o",
+        str(out),
+    ]
+    with umask(0o000):
+        assert cli.main(argv) == 0
+    assert perms(out) == 0o600
 
 
 # ------------------------------------------------------------------ logging

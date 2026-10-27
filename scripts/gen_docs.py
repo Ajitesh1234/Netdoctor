@@ -34,7 +34,7 @@ FLAGS = {
     "checks.dns_compare": "--dns-compare / --no-dns-compare", "checks.resolvers": "--resolver (repeatable)",
     "checks.doh_servers": "--doh, --doh-server (repeatable)", "checks.ca_bundle": "--ca-bundle",
     "checks.max_redirects": "", "output.format": "-f / --format, --json", "output.color": "--color",
-    "output.ascii": "--ascii", "output.file": "-o / --out", "logging.verbose": "-v / -vv",
+    "output.ascii": "--ascii", "output.file": "-o / --out", "output.mode": "--out-mode", "logging.verbose": "-v / -vv",
     "logging.format": "--log-format", "logging.file": "--log-file", "watch.enabled": "-w / --watch",
     "watch.interval": "--interval", "watch.max_runs": "--max-runs", "watch.heartbeat": "--heartbeat",
     "watch.confirm": "--confirm", "webhook.url": "--webhook", "webhook.kind": "--webhook-format",
@@ -66,6 +66,7 @@ DOCS = {
     "output.color": "ANSI colour in text output (`NO_COLOR` is honoured).",
     "output.ascii": "ASCII symbols instead of Unicode.",
     "output.file": "Write the report here (atomically; appended in watch mode). Relative paths resolve against the config file.",
+    "output.mode": "Permissions for newly created report files, as an octal string. Default `600` (owner only), because reports list internal hostnames and findings. Use `640` or `644` deliberately, e.g. so the Prometheus textfile collector (another user) can read it. World-writable modes are refused.",
     "logging.verbose": "0 = warnings, 1 = info, 2 = debug.",
     "logging.format": "`json` emits one JSON object per log line, for SIEM ingestion.",
     "logging.file": "Append logs to this file instead of stderr.",
@@ -92,6 +93,7 @@ _TYPE = {
     cfg._num: "number",
     cfg._str: "string",
     cfg._strs: "list of strings",
+    cfg._mode: "octal mode string",
 }
 
 

@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from . import __version__, report
-from .fsutil import atomic_write_text
+from .fsutil import atomic_write_text, open_private
 from .htmlreport import render_html
 from .logsetup import setup_logging
 from .metrics import MetricsServer, render_prometheus
@@ -30,6 +30,7 @@ from .settings import (
     apply_args,
     apply_file,
     load_file,
+    parse_mode,
     resolve_env_ref,
     secret_from_env,
 )
@@ -61,6 +62,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-f", "--format", choices=FORMATS, help="output format (default: text)")
     p.add_argument("--json", action="store_true", help="shortcut for --format json")
     p.add_argument("-o", "--out", metavar="FILE", help="write the report to FILE (atomically, UTF-8) instead of stdout")
+    p.add_argument(
+        "--out-mode",
+        metavar="MODE",
+        help="permissions for new report files as octal, e.g. 640 (default: 600 = owner only)",
+    )
     p.add_argument("--timeout", type=float, metavar="SECONDS", help="per-operation timeout (default: 5)")
     p.add_argument("--samples", type=int, metavar="N", help="TCP/ICMP samples per endpoint (default: 5)")
     p.add_argument("--workers", type=int, metavar="N", help="targets checked in parallel (default: 4)")
@@ -187,6 +193,7 @@ def resolve_settings(args: argparse.Namespace) -> Settings:
 def validate_settings(settings: Settings) -> None:
     """Cross-field validation. Raises SettingsError/TargetError/ValueError before any network traffic."""
     parse_targets(settings.targets)
+    parse_mode(settings.out_mode)
     if settings.ca_bundle and not os.path.isfile(settings.ca_bundle):
         raise SettingsError(f"ca_bundle file not found: {settings.ca_bundle}")
     if settings.doh_servers and not settings.dns_compare:
@@ -258,7 +265,7 @@ def _one_shot(s: Settings) -> int:
     text = _render(session, s)
     if s.out:
         try:
-            atomic_write_text(s.out, text)
+            atomic_write_text(s.out, text, mode=parse_mode(s.out_mode))
         except OSError as exc:
             print(f"netdoctor: error: cannot write {s.out}: {exc}", file=sys.stderr)
             return EXIT_USAGE
@@ -339,7 +346,8 @@ def _watch(s: Settings) -> int:
             metrics.start()
         if s.out:
             try:
-                out_fh = open(s.out, "a", encoding="utf-8", newline="\n")  # noqa: SIM115 - closed in finally
+                fd = open_private(s.out, os.O_WRONLY | os.O_APPEND | os.O_CREAT, parse_mode(s.out_mode))
+                out_fh = os.fdopen(fd, "a", encoding="utf-8", newline="\n")
             except OSError as exc:
                 raise SettingsError(f"cannot open {s.out}: {exc}") from exc
     except (SettingsError, ValueError) as exc:

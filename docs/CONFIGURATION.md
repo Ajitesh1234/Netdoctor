@@ -45,6 +45,7 @@ See [`examples/netdoctor.toml`](../examples/netdoctor.toml) for a complete annot
 | `color` | one of `auto`, `always`, `never` | `auto` | `--color` | ANSI colour in text output (`NO_COLOR` is honoured). |
 | `ascii` | boolean | `false` | `--ascii` | ASCII symbols instead of Unicode. |
 | `file` | string | *(unset)* | `-o / --out` | Write the report here (atomically; appended in watch mode). Relative paths resolve against the config file. |
+| `mode` | octal mode string | `600` | `--out-mode` | Permissions for newly created report files, as an octal string. Default `600` (owner only), because reports list internal hostnames and findings. Use `640` or `644` deliberately, e.g. so the Prometheus textfile collector (another user) can read it. World-writable modes are refused. |
 
 ## `[logging]`
 

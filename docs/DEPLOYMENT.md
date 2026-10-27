@@ -29,12 +29,13 @@ netdoctor --config /etc/netdoctor/netdoctor.toml -f html -o /var/www/status/repo
 ```
 
 Exit codes: `0` healthy, `1` degraded, `2` usage error, `3` failing, `130` interrupted, `143` terminated.
-Report files are written **atomically**, so collectors never read a half-written file.
+Report files are written **atomically**, so collectors never read a half-written file, and they are created **owner-only (`0600`)** by default because they list internal hostnames and findings. Share deliberately with `--out-mode 640` or `644` (see the textfile collector example below).
 
 ### Prometheus without a daemon (node_exporter textfile collector)
 
 ```cron
-* * * * * netdoctor --config /etc/netdoctor/netdoctor.toml -f prometheus -o /var/lib/node_exporter/textfile/netdoctor.prom
+# --out-mode 644: node_exporter runs as another user and must be able to read the file (the default is owner-only)
+* * * * * netdoctor --config /etc/netdoctor/netdoctor.toml -f prometheus --out-mode 644 -o /var/lib/node_exporter/textfile/netdoctor.prom
 ```
 
 ## Continuous monitoring (watch mode)

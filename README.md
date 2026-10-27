@@ -204,7 +204,7 @@ sent **asynchronously with retries**, and can never stall monitoring. A receiver
 
 ```bash
 netdoctor example.com -w --metrics-port 9877                        # http://127.0.0.1:9877/metrics
-netdoctor --config nd.toml -f prometheus -o /var/lib/node_exporter/textfile/netdoctor.prom   # cron + textfile collector
+netdoctor --config nd.toml -f prometheus --out-mode 644 -o /var/lib/node_exporter/textfile/netdoctor.prom   # cron + textfile collector
 ```
 
 Metrics follow Prometheus conventions (seconds, ratios) and include per-target status, DNS/TCP/TLS/HTTP/ICMP timings, certificate days-to-expiry,
@@ -221,7 +221,7 @@ Full list: [docs/METRICS.md](docs/METRICS.md). Alert rules: [`examples/prometheu
 | `html` | A single self-contained, accessible file (semantic tables, text + symbol status, light/dark/print styles, no JavaScript, strict CSP) |
 | `prometheus` | Metrics text for the node_exporter textfile collector |
 
-`-o FILE` writes **atomically** (a collector never sees a half-written file).
+`-o FILE` writes **atomically** (a collector never sees a half-written file) and creates the file **owner-only (`0600`)**, since reports list internal hostnames and findings. Share deliberately with `--out-mode 640`/`644`.
 
 ## Configuration
 

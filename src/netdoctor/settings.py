@@ -13,6 +13,7 @@ from __future__ import annotations
 import difflib
 import logging
 import os
+import re
 import stat
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ DEFAULT_DOH = ("https://cloudflare-dns.com/dns-query", "https://dns.google/dns-q
 DEFAULT_WEBHOOK_SECRET_ENV = "NETDOCTOR_WEBHOOK_SECRET"  # noqa: S105  # nosec B105 - an env var *name*, not a secret
 DEFAULT_METRICS_TOKEN_ENV = "NETDOCTOR_METRICS_TOKEN"  # noqa: S105  # nosec B105 - an env var *name*, not a secret
 DEFAULT_EVENTS = ("change", "recovered", "error")
+DEFAULT_OUT_MODE = "600"
 
 
 class SettingsError(ValueError):
@@ -49,6 +51,7 @@ class Settings:
     # output
     format: str = "text"
     out: str | None = None
+    out_mode: str = DEFAULT_OUT_MODE
     color: str = "auto"
     ascii: bool = False
     # logging
@@ -162,6 +165,24 @@ def _strs(key: str, v: Any) -> tuple[str, ...]:
     return tuple(v)
 
 
+def parse_mode(value: str) -> int:
+    """``"640"`` -> ``0o640``. Only plain permission bits; world-writable modes are refused."""
+    text = str(value).strip()
+    if not re.fullmatch(r"0?[0-7]{3}", text):
+        raise SettingsError(f"file mode must be 3 octal digits such as 600, 640 or 644 (got {value!r})")
+    mode = int(text, 8)
+    if mode & 0o002:
+        raise SettingsError(f"refusing world-writable report mode {text}: other users could tamper with the report")
+    return mode
+
+
+def _mode(key: str, v: Any) -> str:
+    if not isinstance(v, str):  # NOT int: TOML turns 0o640 into 416, which would be misread as "416"
+        raise SettingsError(f'{key}: expected a quoted octal string such as "640", got {v!r}')
+    parse_mode(v)
+    return v.strip()
+
+
 def _choice(options: tuple[str, ...]) -> Validator:
     def check(key: str, v: Any) -> str:
         if v not in options:
@@ -196,6 +217,7 @@ SCHEMA: dict[str, dict[str, tuple[str, Validator]]] = {
         "color": ("color", _choice(("auto", "always", "never"))),
         "ascii": ("ascii", _bool),
         "file": ("out", _str),
+        "mode": ("out_mode", _mode),
     },
     "logging": {
         "verbose": ("verbose", _int),
@@ -325,7 +347,7 @@ def apply_args(settings: Settings, args: Any) -> None:
     else:
         put("format", args.format)
     for attr in (
-        "out", "color", "timeout", "samples", "workers", "ca_bundle", "interval", "max_runs", "heartbeat", "confirm",
+        "out", "out_mode", "color", "timeout", "samples", "workers", "ca_bundle", "interval", "max_runs", "heartbeat", "confirm",
         "log_format", "log_file", "metrics_port", "metrics_bind", "metrics_token_env", "webhook_kind", "webhook_secret_env",
     ):  # fmt: skip
         put(attr, getattr(args, attr, None))

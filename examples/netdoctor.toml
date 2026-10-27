@@ -24,6 +24,9 @@ cert_expiry_warn_days = 14
 
 [output]
 format = "text"               # text | markdown | json | html | prometheus (watch mode: text | json)
+# file = "/var/lib/node_exporter/textfile/netdoctor.prom"
+mode = "600"                  # permissions of new report files (a quoted octal string). Owner-only by default;
+                              # use "640"/"644" deliberately, e.g. for the Prometheus textfile collector.
 
 [logging]
 format = "json"               # text | json (one object per line, for SIEM ingestion)
