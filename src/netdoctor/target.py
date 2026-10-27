@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import ipaddress
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
+
+MAX_TARGETS = 500
 
 _LABEL = re.compile(r"^[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?$")
 
@@ -106,3 +109,13 @@ def parse_target(raw: str) -> Target:
     if parts.query:
         path += "?" + parts.query
     return Target(raw=text, host=host, scheme=scheme, port=port, path=path, is_ip=is_ip)
+
+
+def parse_targets(raw: Iterable[str]) -> list[Target]:
+    """Parse and validate a batch of targets; enforces :data:`MAX_TARGETS`."""
+    items = list(raw)
+    if not items:
+        raise TargetError("no targets given")
+    if len(items) > MAX_TARGETS:
+        raise TargetError(f"too many targets ({len(items)}); the limit is {MAX_TARGETS}")
+    return [parse_target(t) for t in items]

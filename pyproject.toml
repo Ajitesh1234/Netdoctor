@@ -3,21 +3,23 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "netdoctor"
+name = "netdoctor-cli"
 dynamic = ["version"]
-description = "Explain why a website is slow or unreachable: DNS, TCP, TLS, HTTP, ICMP and path diagnostics with root-cause analysis."
+description = "Explain why a website is slow or unreachable: DNS (incl. DoH), TCP, TLS, HTTP, ICMP diagnostics with root-cause analysis, continuous monitoring, Prometheus metrics and signed webhooks. Standard library only."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Ajitesh Mohapatra" }]
 requires-python = ">=3.9"
-dependencies = []  # standard library only, by design
-keywords = ["network", "diagnostics", "dns", "tls", "troubleshooting", "cli"]
+dependencies = []  # standard library only, by design (see docs/THREAT_MODEL.md)
+keywords = ["network", "diagnostics", "dns", "doh", "tls", "monitoring", "prometheus", "troubleshooting", "cli", "security"]
 classifiers = [
   "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Intended Audience :: System Administrators",
+  "Intended Audience :: Information Technology",
+  "Topic :: Security",
   "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
@@ -30,12 +32,19 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.10", "cryptography>=42"]
+toml = ["tomli>=2.0; python_version < '3.11'"]  # TOML config files on Python 3.9/3.10 (3.11+ has tomllib)
+dev = [
+  "pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.10", "bandit>=1.7", "pip-audit>=2.7",
+  "cryptography>=42",  # test-only: generates throw-away certificates
+  "tomli>=2.0; python_version < '3.11'",
+]
 
 [project.urls]
-Homepage = "https://github.com/Ajitesh1234/netdoctor"
-Issues = "https://github.com/Ajitesh1234/netdoctor/issues"
-Changelog = "https://github.com/Ajitesh1234/netdoctor/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/Ajitesh1234/Netdoctor"
+Documentation = "https://github.com/Ajitesh1234/Netdoctor/tree/main/docs"
+Security = "https://github.com/Ajitesh1234/Netdoctor/security/policy"
+Issues = "https://github.com/Ajitesh1234/Netdoctor/issues"
+Changelog = "https://github.com/Ajitesh1234/Netdoctor/blob/main/CHANGELOG.md"
 
 [project.scripts]
 netdoctor = "netdoctor.cli:main"
@@ -77,3 +86,8 @@ ignore = ["S101", "E501", "S603", "S607", "SIM108", "RUF001"]
 [tool.mypy]
 strict = true
 files = ["src/netdoctor"]
+
+[tool.bandit]
+# Security static analysis. `assert` is not used in shipped code; every remaining suppression is an
+# inline `# nosec <id> - <reason>` so reviewers can audit each one.
+exclude_dirs = ["tests"]

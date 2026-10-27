@@ -3,12 +3,30 @@
 from __future__ import annotations
 
 import json
+import signal
+import subprocess
+import sys
+import time
 
 import pytest
 
 from netdoctor import cli
 from netdoctor.models import Finding, SessionReport, Severity, Status, TargetReport
 
+WATCH = [
+    "--watch",
+    "--max-runs",
+    "1",
+    "--interval",
+    "1",
+    "--ascii",
+    "--no-icmp",
+    "--no-dns-compare",
+    "--samples",
+    "1",
+    "--timeout",
+    "6",
+]
 FAST = ["--no-icmp", "--no-dns-compare", "--samples", "1", "--timeout", "6"]
 
 
@@ -102,10 +120,9 @@ def test_watch_reports_a_change_through_the_cli(monkeypatch, capsys):
         ["a.test", "--watch", "-f", "markdown"],
     ],
 )
-def test_watch_option_misuse_is_a_usage_error(argv):
-    with pytest.raises(SystemExit) as e:
-        cli.main(argv)
-    assert e.value.code == 2
+def test_watch_option_misuse_is_a_usage_error(argv, capsys):
+    assert cli.main(argv) == 2
+    assert "error" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("extra", [["--interval", "0.5"], ["--max-runs", "0"], ["--heartbeat", "-1"]])
@@ -118,3 +135,44 @@ def test_watch_unwritable_out_path(tmp_path, capsys):
     bad = tmp_path / "no" / "such" / "dir" / "w.log"
     assert cli.main(["a.test", "--watch", "--max-runs", "1", "-o", str(bad)]) == 2
     assert "cannot open" in capsys.readouterr().err
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+@pytest.mark.parametrize(("sig", "code"), [(signal.SIGINT, 130), (signal.SIGTERM, 143)])
+def test_real_signals_shut_down_gracefully_and_flush_the_final_notification(http_server, hook_server, sig, code):
+    """`docker stop` / systemd send SIGTERM: the summary must print and queued webhooks must flush."""
+    state, hook_port = hook_server
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "netdoctor", _ok(http_server), "--watch", "--interval", "1",
+            "--ascii", "--json", *FAST, "--webhook", f"http://127.0.0.1:{hook_port}/hook",
+            "--webhook-allow-http", "--webhook-allow-private", "--notify-on", "initial",
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )  # fmt: skip
+    deadline = time.time() + 20
+    while not state["requests"] and time.time() < deadline:  # wait for the first run to complete
+        time.sleep(0.1)
+    proc.send_signal(sig)
+    out, _err = proc.communicate(timeout=30)
+    events = [json.loads(line) for line in out.splitlines()]
+    assert proc.returncode == code
+    assert events[0]["event"] == "initial" and events[-1]["event"] == "summary"
+    assert len(state["requests"]) == 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_sigterm_handler_is_restored_after_watch(http_server):
+    before = signal.getsignal(signal.SIGTERM)
+    assert cli.main([_ok(http_server), *WATCH]) == 0
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
+def test_install_sigterm_outside_the_main_thread_is_a_noop():
+    import threading
+
+    result: list = []
+    t = threading.Thread(target=lambda: result.append(cli._install_sigterm([])))
+    t.start()
+    t.join()
+    assert callable(result[0]) and result[0]() is None

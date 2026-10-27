@@ -1,0 +1,95 @@
+name: Release
+
+# Push a tag like v1.2.0 to release. The tag must equal netdoctor.__version__.
+# 1. build  : sdist + wheel, twine check, SHA256SUMS
+# 2. release: signed build-provenance attestation + GitHub Release (always)
+# 3. pypi   : publish with PyPI Trusted Publishing (OIDC, no stored token). Opt-in: set the repository
+#             variable PUBLISH_TO_PYPI=true after configuring the trusted publisher on PyPI.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Tag must match the package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(python -c 'import re,pathlib; print(re.search(r"__version__ = \"([^\"]+)\"", pathlib.Path("src/netdoctor/__init__.py").read_text()).group(1))')
+          echo "tag=$TAG version=$VERSION"
+          test "v$VERSION" = "$TAG"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check --strict dist/*
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write       # create the GitHub Release
+      id-token: write       # sign the provenance attestation (Sigstore, keyless)
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.whl
+            dist/*.tar.gz
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY' > notes.md
+          import os, re, pathlib
+          tag = os.environ["TAG"].lstrip("v")
+          text = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          m = re.search(rf"^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.S | re.M)
+          print(m.group(1).strip() if m else f"Release {tag}")
+          PY
+          gh release create "$TAG" dist/* --title "NetDoctor $TAG" --notes-file notes.md --verify-tag
+
+  pypi:
+    needs: release
+    if: ${{ vars.PUBLISH_TO_PYPI == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/netdoctor-cli/
+    permissions:
+      id-token: write       # PyPI Trusted Publishing (OIDC); no API token is stored anywhere
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist
+      - run: rm -f dist/SHA256SUMS
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

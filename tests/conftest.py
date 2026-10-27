@@ -10,6 +10,23 @@ from pathlib import Path
 import pytest
 
 
+def server_tls_context(cert_dir):
+    """TLS server context for local test servers (TLS 1.2+, never the legacy protocol versions)."""
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert_dir / "c.pem", cert_dir / "k.pem")
+    return ctx
+
+
+class QuietHTTPServer(http.server.ThreadingHTTPServer):
+    """Test server that does not print a traceback banner when a client disconnects abruptly."""
+
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        pass
+
+
 class _Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args: object) -> None:  # silence
         pass
@@ -35,7 +52,7 @@ class _Handler(http.server.BaseHTTPRequestHandler):
 
 @pytest.fixture()
 def http_server() -> Iterator[int]:
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    srv = QuietHTTPServer(("127.0.0.1", 0), _Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv.server_address[1]
     srv.shutdown()
@@ -114,11 +131,51 @@ def tls_cert(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture()
 def tls_server(tls_cert: Path) -> Iterator[int]:
-    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    ctx.load_cert_chain(tls_cert / "c.pem", tls_cert / "k.pem")
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    ctx = server_tls_context(tls_cert)
+    srv = QuietHTTPServer(("127.0.0.1", 0), _Handler)
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     yield srv.server_address[1]
+    srv.shutdown()
+    srv.server_close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_netdoctor_logging():
+    """The CLI installs a handler on the 'netdoctor' logger; remove it so tests stay independent
+    (and so Windows can delete temp dirs that held a log file)."""
+    import logging
+
+    yield
+    logger = logging.getLogger("netdoctor")
+    for h in list(logger.handlers):
+        if getattr(h, "_netdoctor_handler", False):
+            logger.removeHandler(h)
+            h.close()
+    logger.setLevel(logging.NOTSET)
+
+
+@pytest.fixture()
+def hook_server():
+    state: dict = {"responses": [200], "requests": [], "extra": {}}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            state["requests"].append((self.path, dict(self.headers), body))
+            queue_ = state["responses"]
+            code = queue_.pop(0) if len(queue_) > 1 else queue_[0]
+            self.send_response(code)
+            for k, v in state["extra"].items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    srv = QuietHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield state, srv.server_address[1]
     srv.shutdown()
     srv.server_close()

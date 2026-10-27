@@ -96,6 +96,8 @@ class _State:
     healthy: int = 0
     degraded: int = 0
     failing: int = 0
+    pending: tuple[tuple[Status, frozenset[str]], int] | None = None
+    """(candidate signature, consecutive sightings) while a change awaits confirmation."""
 
 
 def _utc_stamp() -> str:
@@ -126,6 +128,7 @@ class Watcher:
         *,
         interval: float = 30.0,
         heartbeat: float = 0.0,
+        confirm: int = 1,
         clock: Callable[[], float] = time.monotonic,
         stamp: Callable[[], str] = _utc_stamp,
     ) -> None:
@@ -133,11 +136,18 @@ class Watcher:
             raise ValueError("interval must be >= 1 second")
         if heartbeat < 0:
             raise ValueError("heartbeat must be >= 0")
+        if not 1 <= confirm <= 20:
+            raise ValueError("confirm must be between 1 and 20")
         self.targets = list(dict.fromkeys(targets))  # de-duplicate, keep order
         self.cfg = cfg
         self.interval = interval
         self.heartbeat = heartbeat
+        self.confirm = confirm
         self.runs = 0
+        self.errors = 0
+        self.last_session: SessionReport | None = None
+        self.last_success_ts: float | None = None
+        """Unix time of the last cycle that completed without an internal error."""
         self._clock = clock
         self._stamp = stamp
         self._states: dict[str, _State] = {}
@@ -168,31 +178,48 @@ class Watcher:
                     )
                 )
             else:
-                added = [f for code, f in significant.items() if code not in state.codes]
-                removed = [code for code in state.codes if code not in significant]
-                previous = state.status
-                if rep.status != previous or added or removed:
-                    status_changed = rep.status != previous
-                    kind = RECOVERED if (rep.status is Status.HEALTHY and previous is not Status.HEALTHY) else CHANGE
-                    events.append(
-                        WatchEvent(
-                            kind,
-                            ts,
-                            rep.target,
-                            rep.status,
-                            previous_status=previous if status_changed else None,
-                            summary=rep.summary,
-                            in_previous_state_s=round(now - state.since, 1) if status_changed else None,
-                            added=added,
-                            removed=removed,
-                            report=rep,
-                        )
-                    )
-                    if status_changed:
-                        state.status, state.since = rep.status, now
-                    state.codes = significant
-                else:
+                current = (state.status, frozenset(state.codes))
+                candidate = (rep.status, frozenset(significant))
+                if candidate == current:
+                    state.pending = None
                     quiet.append(rep)
+                else:
+                    seen = state.pending[1] + 1 if state.pending and state.pending[0] == candidate else 1
+                    state.pending = (candidate, seen)
+                    if seen < self.confirm:
+                        log.debug(
+                            "%s: change to %s seen %d/%d, awaiting confirmation",
+                            rep.target,
+                            rep.status.value,
+                            seen,
+                            self.confirm,
+                        )
+                    else:
+                        state.pending = None
+                        added = [f for code, f in significant.items() if code not in state.codes]
+                        removed = [code for code in state.codes if code not in significant]
+                        previous = state.status
+                        status_changed = rep.status != previous
+                        kind = (
+                            RECOVERED if (rep.status is Status.HEALTHY and previous is not Status.HEALTHY) else CHANGE
+                        )
+                        events.append(
+                            WatchEvent(
+                                kind,
+                                ts,
+                                rep.target,
+                                rep.status,
+                                previous_status=previous if status_changed else None,
+                                summary=rep.summary,
+                                in_previous_state_s=round(now - state.since, 1) if status_changed else None,
+                                added=added,
+                                removed=removed,
+                                report=rep,
+                            )
+                        )
+                        if status_changed:
+                            state.status, state.since = rep.status, now
+                        state.codes = significant
 
             state.checks += 1
             if rep.status is Status.HEALTHY:
@@ -229,6 +256,7 @@ class Watcher:
         runner: Runner = run,
         stop: threading.Event | None = None,
         sleep: Callable[[float, threading.Event], None] | None = None,
+        on_session: Callable[[SessionReport], None] | None = None,
     ) -> SessionReport | None:
         """Run until ``max_runs`` is reached or ``stop`` is set. Returns the last good session.
 
@@ -243,10 +271,15 @@ class Watcher:
                 last = runner(self.targets, self.cfg)
             except Exception as exc:
                 log.exception("watch cycle failed")
+                self.errors += 1
                 emit(WatchEvent(ERROR, self._stamp(), error=short_error(exc)))
             else:
+                self.last_session = last
+                self.last_success_ts = time.time()
                 for event in self.observe(last):
                     emit(event)
+                if on_session is not None:
+                    on_session(last)
             self.runs += 1
             if max_runs is not None and self.runs >= max_runs:
                 break
@@ -284,7 +317,8 @@ def render_event_text(event: WatchEvent, *, ascii_only: bool = False, color: boo
             f"{stamp}  {_paint(icons[Severity.CRITICAL], Severity.CRITICAL, color)} watch cycle failed: {event.error}"
         )
 
-    assert event.status is not None and event.target is not None
+    if event.status is None or event.target is None:  # defensive: only error events lack these
+        return f"{stamp}  {event.event}"
     sev = _STATUS_SEV[event.status]
     badge = _paint(f"{icons[sev]} {event.status.value.upper():<8}", sev, color)
     head = f"{stamp}  {event.target}  {badge}"

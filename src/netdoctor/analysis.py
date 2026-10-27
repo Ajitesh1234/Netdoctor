@@ -34,9 +34,25 @@ def analyze(rep: TargetReport, cfg: Config, *, is_ip: bool = False) -> None:
 
 
 # --------------------------------------------------------------------------- DNS
+def _split(addresses: set[str]) -> tuple[set[str], set[str]]:
+    return {a for a in addresses if ":" not in a}, {a for a in addresses if ":" in a}
+
+
+def _disjoint(a: set[str], b: set[str]) -> bool:
+    """True if, in at least one IP family, both sides answered but share no address."""
+    a4, a6 = _split(a)
+    b4, b6 = _split(b)
+    return bool((a4 and b4 and a4.isdisjoint(b4)) or (a6 and b6 and a6.isdisjoint(b6)))
+
+
+def _fmt_set(addresses: set[str]) -> str:
+    return ", ".join(sorted(addresses))
+
+
 def _dns(rep: TargetReport, cfg: Config, out: list[Finding], is_ip: bool) -> bool:
     dns = rep.dns
-    assert dns is not None
+    if dns is None:  # internal invariant: analysis only runs after the DNS check
+        raise RuntimeError("analysis requires a DNS result")
     public_ok = [r for r in dns.public if r.ok]
     public_names = ", ".join(r.server for r in public_ok)
 
@@ -97,15 +113,25 @@ def _dns(rep: TargetReport, cfg: Config, out: list[Finding], is_ip: bool) -> boo
                 )
                 break
 
-        sys_v4 = {a for a in dns.addresses if ":" not in a}
-        pub_v4 = {a for r in public_ok for a in r.addresses}
-        if sys_v4 and pub_v4 and sys_v4.isdisjoint(pub_v4):
+        udp = {a for r in public_ok if r.transport == "udp" for a in r.addresses}
+        doh = {a for r in public_ok if r.transport == "doh" for a in r.addresses}
+        system = set(dns.addresses)
+        if doh and _disjoint(system | udp, doh):
+            out.append(
+                Finding(
+                    WARN,
+                    "DNS_TAMPERING_SUSPECTED",
+                    f"Plain DNS answered {_fmt_set(system | udp)} but encrypted DNS (DoH) answered {_fmt_set(doh)}.",
+                    "Plain port-53 DNS may be tampered with or intercepted on your network. CDNs and "
+                    "geo-aware DNS can cause this too, so confirm from a different network.",
+                )
+            )
+        elif _disjoint(system, udp | doh):
             out.append(
                 Finding(
                     INFO,
                     "DNS_MISMATCH",
-                    f"System resolver answered {', '.join(sorted(sys_v4))} while public resolvers "
-                    f"answered {', '.join(sorted(pub_v4))}.",
+                    f"System resolver answered {_fmt_set(system)} while public resolvers answered {_fmt_set(udp | doh)}.",
                     "Common with CDNs and geo-aware DNS. If the site is also unreachable, this may "
                     "indicate DNS tampering.",
                 )

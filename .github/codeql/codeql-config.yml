@@ -1,0 +1,8 @@
+# CodeQL scans the code that ships (src/). tests/ and scripts/ are excluded on purpose: the test suite
+# deliberately constructs insecure-looking conditions (world-readable files, sockets bound to 0.0.0.0,
+# throw-away certificates) in order to prove that NetDoctor's safeguards react to them, and scripts/ only
+# generates documentation. Findings in shipped code are NOT excluded and fail the check.
+name: NetDoctor CodeQL configuration
+paths-ignore:
+  - tests
+  - scripts

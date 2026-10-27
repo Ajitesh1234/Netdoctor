@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import platform
 import time
+import uuid
 from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -27,7 +29,7 @@ from .models import (
     TlsResult,
     TracerouteResult,
 )
-from .target import Target, parse_target
+from .target import Target, parse_target, parse_targets
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -100,11 +102,13 @@ def run(targets: Iterable[str], cfg: Config | None = None) -> SessionReport:
     Raises ``TargetError`` up-front if any target is invalid, before any traffic is sent.
     """
     cfg = cfg or Config()
-    parsed = [parse_target(t) for t in targets]
+    parsed = parse_targets(targets)
     with ThreadPoolExecutor(max_workers=min(cfg.workers, max(1, len(parsed)))) as pool:
         reports = list(pool.map(lambda t: diagnose(t, cfg), parsed))
     return SessionReport(
         tool_version=__version__,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         reports=reports,
+        run_id=uuid.uuid4().hex,
+        environment={"python": platform.python_version(), "platform": platform.platform(terse=True)},
     )

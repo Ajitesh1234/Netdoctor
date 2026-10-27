@@ -321,3 +321,75 @@ def test_summary_rendering(clock):
         and data["targets"][0]["target"] == "a.test"
         and data["targets"][0]["healthy_pct"] == 100.0
     )
+
+
+# ------------------------------------------------------------------ flap damping (--confirm)
+def test_confirm_requires_n_consecutive_sightings(clock):
+    w = make(clock, confirm=3)
+    assert w.observe(sess(rep()))[0].event == "initial"  # the first observation is never delayed
+    bad = sess(rep("a.test", finding("TCP_UNREACHABLE", C)))
+    clock.t += 10
+    assert w.observe(bad) == []
+    clock.t += 10
+    assert w.observe(bad) == []
+    clock.t += 10
+    (ev,) = w.observe(bad)
+    assert ev.event == "change" and ev.status is Status.FAILING and ev.in_previous_state_s == 30.0
+
+
+def test_single_blip_never_alerts(clock):
+    w = make(clock, confirm=2)
+    w.observe(sess(rep()))
+    bad, good = sess(rep("a.test", finding("TCP_UNREACHABLE", C))), sess(rep())
+    for _ in range(5):  # flapping bad/good/bad/good: the candidate never reaches 2 in a row
+        clock.t += 5
+        assert w.observe(bad) == []
+        clock.t += 5
+        assert w.observe(good) == []
+
+
+def test_a_different_candidate_restarts_the_count(clock):
+    w = make(clock, confirm=2)
+    w.observe(sess(rep()))
+    a, b = sess(rep("a.test", finding("HIGH_LATENCY"))), sess(rep("a.test", finding("TCP_UNREACHABLE", C)))
+    assert w.observe(a) == []  # candidate A: 1/2
+    assert w.observe(b) == []  # candidate B replaces it: 1/2
+    assert w.observe(a) == []  # back to A: 1/2 again
+    (ev,) = w.observe(a)  # A confirmed
+    assert ev.status is Status.DEGRADED
+
+
+def test_confirmed_recovery_is_also_damped(clock):
+    w = make(clock, confirm=2)
+    bad = sess(rep("a.test", finding("TCP_UNREACHABLE", C)))
+    w.observe(bad)
+    assert w.observe(sess(rep())) == []
+    assert w.observe(sess(rep()))[0].event == "recovered"
+
+
+def test_unconfirmed_changes_produce_no_misleading_heartbeat(clock):
+    w = make(clock, confirm=3, heartbeat=5)
+    w.observe(sess(rep()))
+    clock.t += 6
+    assert w.observe(sess(rep("a.test", finding("HIGH_LATENCY")))) == []  # pending, and no heartbeat claiming health
+
+
+def test_confirm_is_validated(clock):
+    for bad in (0, 21):
+        with pytest.raises(ValueError, match="confirm"):
+            make(clock, confirm=bad)
+
+
+# ------------------------------------------------------------------ loop bookkeeping used by metrics
+def test_loop_tracks_errors_last_session_and_calls_hook(clock):
+    w = make(clock, interval=1)
+    good = sess(rep())
+    runner, _ = scripted(good, RuntimeError("x"), good)
+    seen: list = []
+    w.loop(lambda e: None, max_runs=3, runner=runner, sleep=lambda s, st: None, on_session=seen.append)
+    assert w.errors == 1 and w.runs == 3 and w.last_session is good and seen == [good, good]
+
+
+def test_rendering_an_event_without_status_or_target_does_not_crash():
+    out = watch.render_event_text(watch.WatchEvent("change", "2026-01-01T00:00:00Z"), ascii_only=True)
+    assert out.endswith("change") and "2026-01-01 00:00:00Z" in out

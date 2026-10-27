@@ -1,0 +1,29 @@
+# Minimal hardened Deployment: continuous monitoring with Prometheus metrics.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: netdoctor}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: netdoctor}}
+  template:
+    metadata:
+      labels: {app: netdoctor}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "9877"}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: netdoctor
+          image: netdoctor:1.2.0          # build and push your own image from the Dockerfile
+          args: ["--config", "/etc/netdoctor/netdoctor.toml", "--watch", "--metrics-bind", "0.0.0.0"]
+          ports: [{containerPort: 9877, name: metrics}]
+          envFrom: [{secretRef: {name: netdoctor-secrets}}]   # NETDOCTOR_WEBHOOK_URL / _SECRET / NETDOCTOR_METRICS_TOKEN
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}   # add NET_RAW only if you want ICMP ping
+          readinessProbe: {httpGet: {path: /healthz, port: metrics}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /healthz, port: metrics}, periodSeconds: 30}
+          resources: {requests: {cpu: 20m, memory: 48Mi}, limits: {memory: 128Mi}}
+          volumeMounts: [{name: config, mountPath: /etc/netdoctor, readOnly: true}]
+      volumes: [{name: config, configMap: {name: netdoctor-config}}]

@@ -1,0 +1,34 @@
+# Prometheus alerting rules for NetDoctor metrics (scrape the watch-mode /metrics endpoint).
+groups:
+  - name: netdoctor
+    rules:
+      - alert: NetDoctorTargetFailing
+        expr: netdoctor_target_status{status="failing"} == 1
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: "{{ $labels.target }} is failing"
+          description: "Active findings: see netdoctor_finding{target=\"{{ $labels.target }}\"}."
+      - alert: NetDoctorTargetDegraded
+        expr: netdoctor_target_status{status="degraded"} == 1
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $labels.target }} is degraded"
+      - alert: NetDoctorCertificateExpiringSoon
+        expr: netdoctor_tls_cert_expiry_days < 14
+        for: 1h
+        labels: {severity: warning}
+        annotations:
+          summary: "Certificate for {{ $labels.target }} expires in {{ $value | humanize }} days"
+      - alert: NetDoctorMonitorStalled
+        expr: time() - netdoctor_last_success_timestamp_seconds > 600
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "NetDoctor has not completed a cycle in 10 minutes (the monitor itself is unhealthy)"
+      - alert: NetDoctorNotificationsFailing
+        expr: increase(netdoctor_notifications_failed_total[1h]) > 0
+        labels: {severity: warning}
+        annotations:
+          summary: "NetDoctor webhook notifications are failing; alerts may not be reaching people"

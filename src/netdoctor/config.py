@@ -24,6 +24,8 @@ class Config:
     """PEM file of trusted CAs used *instead of* the system store (e.g. a corporate CA)."""
     resolvers: tuple[str, ...] = ("1.1.1.1", "8.8.8.8")
     """Public resolvers used to cross-check the system resolver."""
+    doh_servers: tuple[str, ...] = ()
+    """RFC 8484 DNS-over-HTTPS endpoints (https:// URLs) for an encrypted cross-check."""
 
     # --- diagnosis thresholds ---------------------------------------------
     latency_warn_ms: float = 250.0
@@ -39,5 +41,8 @@ class Config:
             raise ValueError("samples must be between 1 and 50")
         if not 1 <= self.workers <= 32:
             raise ValueError("workers must be between 1 and 32")
+        for url in self.doh_servers:
+            if not url.startswith("https://"):
+                raise ValueError(f"DoH server must be an https:// URL: {url!r}")
         if not 0 <= self.max_redirects <= 20:
             raise ValueError("max_redirects must be between 0 and 20")
